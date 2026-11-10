@@ -437,6 +437,7 @@ final class MPVPlaybackController: UIViewController {
         PiPDiagnostics.record(event, backend: "mpv", sessionID: piPDiagnosticSessionID,
             trigger: manuallyRequestedPiP ? "manual" : "automatic", view: viewIfLoaded, time: playback.currentTime,
             facts: ["frameReady": facts["frameReady"] as? Bool == true,
+                    "sourceAttached": facts["sourceAttached"] as? Bool == true,
                     "outputPrimed": facts["outputPrimed"] as? Bool == true,
                     "possible": pictureInPicture?.possible == true,
                     "prepared": automaticPiPPrepared,
