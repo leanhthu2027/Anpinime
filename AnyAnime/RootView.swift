@@ -67,7 +67,7 @@ struct RootView: View {
         Group {
             if enteredLibrary {
                 if selectedLibrary == .aiDrama {
-                    AIDramaLibraryView(store: aiDramaStore, onChooseLibrary: { enteredLibrary = false })
+                    AIDramaLibraryView(store: aiDramaStore, onChooseLibrary: showLibraryChooser)
                 } else if (selectedLibrary == .anime && !service.source.isMovie)
                     || (selectedLibrary == .movie && service.source.isMovie) {
                     library
@@ -141,9 +141,14 @@ struct RootView: View {
         }
     }
 
+    private func showLibraryChooser() {
+        NotificationCenter.default.post(name: Notification.Name("AnPinime.libraryWillChange"), object: nil)
+        enteredLibrary = false
+    }
+
     private var library: some View {
         TabView(selection: $selectedLibraryTab) {
-            NavigationView { HomeView(onChooseLibrary: { enteredLibrary = false }) }
+            NavigationView { HomeView(onChooseLibrary: showLibraryChooser) }
                 .navigationViewStyle(.stack)
                 .tabItem { Label("Trang chủ", systemImage: "house.fill") }
                 .tag(0)
@@ -167,7 +172,7 @@ struct RootView: View {
                     .tag(3)
             }
 
-            NavigationView { AppSettingsView(onChooseLibrary: { enteredLibrary = false }) }
+            NavigationView { AppSettingsView(onChooseLibrary: showLibraryChooser) }
                 .navigationViewStyle(.stack)
                 .tabItem { Label("Cài đặt", systemImage: "gearshape.fill") }
                 .tag(4)

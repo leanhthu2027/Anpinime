@@ -27,10 +27,10 @@ struct AetherBrowserView: View {
                     .font(.footnote).padding(8)
             }
             AetherWebSurface(session: session)
+                .id(session.browserGeneration)
                 .accessibilityIdentifier("aether.browser")
         }
-        .onAppear { session.setVisible(true); session.open(); session.setAutomaticPiP(automaticPiP) }
-        .onDisappear { session.setVisible(false) }
+        .onAppear { session.open(); session.setAutomaticPiP(automaticPiP) }
         .onChange(of: automaticPiP) { session.setAutomaticPiP($0) }
     }
 }
@@ -55,6 +55,7 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     @Published private(set) var error: String?
     @Published private(set) var canGoBack = false
     @Published private(set) var ended = false
+    @Published private(set) var browserGeneration = UUID()
     @Published private(set) var pip = WebPiPSessionState()
     private(set) var webView: WKWebView!
     private let resolver: AetherDomainResolver
@@ -63,7 +64,8 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     private var deadline: Task<Void, Never>?
     private var pipDeadline: Task<Void, Never>?
     private var navigationGeneration = UUID()
-    private var visible = false
+    private var hasOpened = false
+    private var backObservation: NSKeyValueObservation?
     private var ending = false
     private var automatic = true
     private var retainedForPiP: AetherBrowserSession?
@@ -74,6 +76,18 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     init(resolver: AetherDomainResolver = .shared) {
         self.resolver = resolver
         super.init()
+        createBrowser()
+        NotificationCenter.default.addObserver(self, selector: #selector(sourceWillChange), name: Notification.Name("AnPinime.sourceWillChange"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sourceWillChange), name: Notification.Name("AnPinime.libraryWillChange"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(returnedToForeground), name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    private func createBrowser() {
+        // Only an explicit new session gets a new browsing history. Fullscreen,
+        // subtitle changes, tabs and PiP continue using the original WKWebView.
+        backObservation = nil
+        webView?.navigationDelegate = nil; webView?.uiDelegate = nil
+        for name in ["pipState", "mediaState"] { webView?.configuration.userContentController.removeScriptMessageHandler(forName: name) }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
@@ -85,10 +99,14 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
             injectionTime: .atDocumentStart, forMainFrameOnly: false))
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self; webView.uiDelegate = self
+        backObservation = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.canGoBack = self.pinnedOrigin != nil && self.webView.canGoBack
+            }
+        }
+        browserGeneration = UUID()
         // Keep WebKit's mobile UA, website controls, caption renderer and storage.
-        NotificationCenter.default.addObserver(self, selector: #selector(sourceWillChange), name: Notification.Name("AnPinime.sourceWillChange"), object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(sourceWillChange), name: Notification.Name("AnPinime.libraryWillChange"), object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(returnedToForeground), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
     deinit { NotificationCenter.default.removeObserver(self); opening?.cancel(); deadline?.cancel(); pipDeadline?.cancel() }
@@ -104,6 +122,8 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
                 let selection = try await resolver.resolve(force: force)
                 try Task.checkCancellation()
                 guard let self else { return }
+                if self.hasOpened { self.createBrowser() }
+                self.hasOpened = true
                 self.ending = false
                 self.pinnedOrigin = selection.origin
                 if selection.needsVerification { self.error = "Aether yêu cầu xác minh. Hãy làm theo hướng dẫn ngay trong trang." }
@@ -117,11 +137,6 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
         }
     }
 
-    func setVisible(_ value: Bool) {
-        visible = value
-        // Tab/fullscreen/system presentation is not an end-session gesture.
-        // Actual source/library changes send the explicit shutdown notification.
-    }
     func setAutomaticPiP(_ value: Bool) { automatic = value; send(["name": "automaticPiP", "value": value ? 1 : 0]) }
     func goBack() { guard !pip.active, !pip.pending else { return }; webView.goBack() }
 
