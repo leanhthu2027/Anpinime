@@ -1,5 +1,7 @@
 # Aether migration và PiP recovery — AnPinime 2.9.4 (23)
 
+> Báo cáo lịch sử của web MVP. Kiến trúc hiện tại và kết quả kiểm thử nằm tại [Anpinime VIP native](ANPINIME_VIP_NATIVE_REPORT.md).
+
 > Cập nhật sau yêu cầu build: **[IPA 2.9.4 (24) đã build và kiểm tra gói](AETHER_IPA_BUILD_24.md)**. Source build `576260b`; chỉ một job macOS 264 giây, không Simulator/full suite/retry. Các mục SKIP build bên dưới mô tả thời điểm báo cáo migration ban đầu; PiP iPhone và Aether live vẫn cần kiểm chứng riêng.
 
 Ngày kiểm tra: 10/11/2026. **Trạng thái: đã triển khai MVP duyệt/phát Aether bằng website và sửa các lỗi ownership/callback PiP xác định được trong mã. Aether live, Apple SDK build và cửa sổ PiP iPhone chưa được xác nhận. `NEEDS_PHYSICAL_IPHONE_TEST`.**

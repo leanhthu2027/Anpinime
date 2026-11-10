@@ -11,6 +11,8 @@ final class PlaybackState: ObservableObject {
     @Published var pictureInPictureActive = false
     @Published var pictureInPictureError: String?
     @Published var pictureInPicturePending = false
+    @Published var websiteControlsAvailable = false
+    @Published var websiteControlsVisible = false
     #if DEBUG
     var pipSmokeFrames = 0
     var pipSmokeSeekPauseRestored = false
@@ -52,6 +54,7 @@ final class PlaybackState: ObservableObject {
     func reset() {
         loading = true; buffering = false; playing = false; userPaused = false
         pictureInPictureSupported = false; pictureInPictureActive = false; pictureInPicturePending = false; pictureInPictureError = nil
+        websiteControlsAvailable = false; websiteControlsVisible = false
         currentTime = 0; duration = 0; error = nil; verification = false
         videoWidth = 0; videoHeight = 0
         audioTracks = []; subtitleTracks = []; audioTrack = ""; subtitleTrack = "off"
@@ -69,6 +72,7 @@ struct PlayerView: View {
     let artworkURL: URL?
     let episodes: [Episode]
     @State private var selectedEpisode: Episode?
+    @State private var pendingReplacement: Replacement?
     @State private var attempt = 0
     @State private var controlsVisible = true
     @State private var locked = false
@@ -83,6 +87,11 @@ struct PlayerView: View {
     @AppStorage("AnPinime.rememberSpeed") private var rememberSpeed = true
     @AppStorage("AnPinime.playbackRate") private var savedRate = 1.0
     @AppStorage("AnPinime.skipSeconds") private var skipSeconds = 10
+
+    private enum Replacement {
+        case episode(Episode)
+        case retry
+    }
 
     private var current: Episode { selectedEpisode ?? episode }
     private var currentIndex: Int? { episodes.firstIndex(where: { $0.id == current.id }) }
@@ -102,11 +111,19 @@ struct PlayerView: View {
                     .id(current.id + "-\(attempt)")
                     .ignoresSafeArea()
 
-                if playback.loading && !playback.playing && !playback.verification {
+                if playback.loading && !playback.playing && !playback.verification && !playback.websiteControlsVisible {
                     loadingBackdrop(size: geometry.size)
                 }
 
-                if !playback.verification && playback.engine == "AVPlayer" {
+                if playback.websiteControlsVisible {
+                    VStack {
+                        HStack {
+                            controlButton("chevron.left", "Về điều khiển Anpinime") { playback.send("websiteControls", 0) }
+                            Spacer()
+                        }
+                        Spacer()
+                    }.padding()
+                } else if !playback.verification && playback.engine == "AVPlayer" {
                     // Let AVKit receive gestures for its own PiP, tracks, seek
                     // and fullscreen controls; the app still supplies dismissal.
                     VStack { HStack { controlButton("xmark", "Đóng trình phát") { dismiss() }; Spacer() }; Spacer() }.padding()
@@ -148,7 +165,7 @@ struct PlayerView: View {
                             HStack(spacing: 12) {
                                 Button("Thử phát lại") { retry() }.buttonStyle(.borderedProminent).tint(.anpinimeAccent)
                                 if availableSeasons.count > 1 {
-                                    Button("Đổi Server") { openPanel("seasons") }.buttonStyle(.bordered).tint(.white)
+                                    Button(current.source == .aether ? "Chọn phần" : "Đổi Server") { openPanel("seasons") }.buttonStyle(.bordered).tint(.white)
                                 }
                             }
                         }.padding(24).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
@@ -192,9 +209,9 @@ struct PlayerView: View {
         }
         .onDisappear {
             hideTask?.cancel()
-            // AVKit may temporarily cover the inline host while PiP takes over.
-            // Closing the player still tears down its controller in dismantle.
-            if !playback.pictureInPictureActive && !playback.pictureInPicturePending {
+            // WebKit fullscreen and AVKit PiP can temporarily cover this host.
+            // Actual dismissal shuts down the backend in dismantle.
+            if current.source != .aether && !playback.pictureInPictureActive && !playback.pictureInPicturePending {
                 playback.send("pause")
             }
             UIApplication.shared.isIdleTimerDisabled = false
@@ -202,6 +219,10 @@ struct PlayerView: View {
         }
         .onChange(of: playback.playing) { _ in scheduleHide() }
         .onChange(of: playback.loading) { loading in if !loading { scheduleHide() } }
+        .onChange(of: playback.pictureInPictureActive) { _ in finishReplacementIfReady() }
+        .onChange(of: playback.pictureInPicturePending) { _ in finishReplacementIfReady() }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AnPinime.sourceWillChange"))) { _ in pendingReplacement = nil }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AnPinime.libraryWillChange"))) { _ in pendingReplacement = nil }
         .onChange(of: playback.endCount) { _ in
             if autoNext, let next = nextEpisode { select(next) }
             else { controlsVisible = true }
@@ -274,7 +295,7 @@ struct PlayerView: View {
                     HStack(spacing: 12) {
                         smallButton("Danh sách tập", "rectangle.stack") { openPanel("episodes") }
                         if availableSeasons.count > 1 {
-                            smallButton("Đổi Server", "server.rack") { openPanel("seasons") }
+                            smallButton(current.source == .aether ? "Chọn phần" : "Đổi Server", "server.rack") { openPanel("seasons") }
                         }
                         if let next = nextEpisode {
                             if size.width > 500 { smallButton("Tập tiếp", "forward.end.fill") { select(next) } }
@@ -511,15 +532,44 @@ struct PlayerView: View {
     }
 
     private func openPanel(_ name: String) {
+        if name == "quality", current.source == .aether {
+            panel = nil
+            playback.send("websiteControls", 1)
+            return
+        }
         hideTask?.cancel(); panelSeason = current.season
         withAnimation(.easeOut(duration: 0.2)) { panel = name }
     }
     private func closePanel() { withAnimation { panel = nil }; scheduleHide() }
     private func select(_ item: Episode) {
-        playback.send("pause"); playback.reset()
-        selectedEpisode = item; panel = nil; controlsVisible = true
+        requestReplacement(.episode(item))
     }
-    private func retry() { playback.send("pause"); playback.reset(); attempt += 1; controlsVisible = true }
+    private func retry() { requestReplacement(.retry) }
+    private func requestReplacement(_ replacement: Replacement) {
+        if current.source == .aether && (playback.pictureInPictureActive || playback.pictureInPicturePending) {
+            // Keep the old WebKit owner alive until the system confirms PiP has
+            // stopped, before creating the next episode's web view.
+            pendingReplacement = replacement
+            playback.send("pipStop")
+            return
+        }
+        applyReplacement(replacement)
+    }
+    private func finishReplacementIfReady() {
+        guard !playback.pictureInPictureActive, !playback.pictureInPicturePending,
+              let replacement = pendingReplacement else { return }
+        pendingReplacement = nil
+        applyReplacement(replacement)
+    }
+    private func applyReplacement(_ replacement: Replacement) {
+        pendingReplacement = nil
+        playback.send("pause"); playback.reset()
+        switch replacement {
+        case .episode(let item): selectedEpisode = item
+        case .retry: attempt += 1
+        }
+        panel = nil; controlsVisible = true
+    }
     private func scheduleHide() {
         hideTask?.cancel()
         #if DEBUG

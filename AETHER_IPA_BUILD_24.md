@@ -1,5 +1,7 @@
 # AnPinime 2.9.4 (24) — IPA để test Aether và PiP
 
+> Bản lịch sử: IPA này dùng web MVP cũ. Các sửa đổi **Anpinime VIP native** nằm trong [báo cáo mới](ANPINIME_VIP_NATIVE_REPORT.md), chưa có trong IPA build 24.
+
 **[Tải AnPinime_UNSIGNED](https://github.com/pythonltn2000/Anpinime/actions/runs/42795441404/artifacts/13755390351)**.
 Artifact là ZIP chứa IPA chưa ký, checksum và manifest. Giải nén, ký IPA bằng chứng chỉ hợp lệ rồi cài trên iPhone. Hết hạn **17:04 ngày 13/11/2026 (UTC+7)**.
 

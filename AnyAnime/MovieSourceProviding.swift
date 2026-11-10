@@ -1,7 +1,7 @@
 import Foundation
 
-/// Native JSON providers and the website-owned Aether MVP share a router,
-/// without teaching the public JSON client about Aether's unverified API.
+/// Native catalogs share routing while keeping provider-specific metadata and
+/// playback resolution separate.
 @MainActor
 protocol MovieSourceProviding: AnyObject {
     var baseURL: URL { get }

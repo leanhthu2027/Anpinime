@@ -7,7 +7,11 @@ trap 'rm -rf "$ANPINIME_AETHER_TEMP"' EXIT
 "$ANPINIME_SWIFTC" AnyAnime/Aether/AetherDomainResolver.swift Tests/AetherDomainResolverTests.swift -o "$ANPINIME_AETHER_TEMP/domains"
 "$ANPINIME_AETHER_TEMP/domains"
 "$ANPINIME_SWIFTC" AnyAnime/Models.swift AnyAnime/SearchHistory.swift AnyAnime/MovieSourceMigration.swift \
-  AnyAnime/MovieSourceProviding.swift AnyAnime/WebPiPSessionState.swift \
-  AnyAnime/Aether/AetherDomainResolver.swift AnyAnime/Aether/AetherProvider.swift \
+  AnyAnime/WebPiPSessionState.swift \
   Tests/AetherIntegrationTests.swift -o "$ANPINIME_AETHER_TEMP/integration"
 "$ANPINIME_AETHER_TEMP/integration"
+"$ANPINIME_SWIFTC" AnyAnime/Models.swift AnyAnime/MovieSourceProviding.swift \
+  AnyAnime/Aether/AetherDomainResolver.swift AnyAnime/Aether/AetherMetadataSettings.swift \
+  AnyAnime/Aether/AetherCatalog.swift AnyAnime/Aether/AetherProvider.swift \
+  Tests/AetherCatalogTests.swift -o "$ANPINIME_AETHER_TEMP/catalog"
+"$ANPINIME_AETHER_TEMP/catalog"

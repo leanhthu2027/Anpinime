@@ -115,6 +115,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private var startTimeout: Task<Void, Never>?
     private var stopTimeout: Task<Void, Never>?
     private var cleanupComplete = false
+    private var publishesPlaybackState = true
     private var stopCompletions: [() -> Void] = []
     private var retainedUntilStopped: MPVPictureInPicture?
     private var outputReady = false
@@ -358,7 +359,10 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         controller?.invalidatePlaybackState()
     }
 
-    func stop(restore: Bool, completion: @escaping () -> Void = {}) {
+    func stop(restore: Bool, publishState: Bool = true, completion: @escaping () -> Void = {}) {
+        // A replacement may reuse PlaybackState before this renderer finishes
+        // its asynchronous cleanup. The retired bridge no longer owns that UI.
+        publishesPlaybackState = publishesPlaybackState && publishState
         if cleanupComplete { completion(); return }
         stopCompletions.append(completion)
         restoreAfterStop = restoreAfterStop || restore
@@ -411,8 +415,10 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
             cleanupComplete = true
             // Publish after renderer/AVKit cleanup, never during representable teardown.
             // The session can now safely rebuild a viewport or release this decoder.
-            playback.pictureInPicturePending = false
-            playback.pictureInPictureActive = false
+            if publishesPlaybackState {
+                playback.pictureInPicturePending = false
+                playback.pictureInPictureActive = false
+            }
             let callbacks = stopCompletions; stopCompletions = []
             callbacks.forEach { $0() }
             retainedUntilStopped = nil

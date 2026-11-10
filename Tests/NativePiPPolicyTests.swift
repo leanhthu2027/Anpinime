@@ -13,6 +13,7 @@ struct NativePiPPolicyTests {
 
     static func main() {
         verifyReadiness()
+        verifyPausedManualEntry()
         verifyRetryRecovery()
         verifyInterruptedRequest()
         verifyForegroundAndControls()
@@ -24,7 +25,34 @@ struct NativePiPPolicyTests {
         print("\(checks) native PiP policy checks passed")
     }
 
+    private static func verifyPausedManualEntry() {
+        // With bit order playing/manual/decoder/attached, only these three
+        // complete ready states may acquire a frame. This also covers preload,
+        // missing dimensions/EOF and detachment represented by decoder/owner gates.
+        let allowedStates: Set<Int> = [13, 14, 15]
+        for bits in 0..<16 {
+            let playing = bits & 1 != 0, manual = bits & 2 != 0
+            let decoderReady = bits & 4 != 0, attached = bits & 8 != 0
+            require(NativePiPPolicy.canBootstrapFrame(playing: playing, manualRequest: manual,
+                decoderReady: decoderReady, sourceAttached: attached) == allowedStates.contains(bits),
+                "bootstrap acquisition keeps ownership and decoder gates across manual/playing states: \(bits)")
+        }
+        let pausedManual = NativePiPPolicy.canBootstrapFrame(playing: false, manualRequest: true,
+            decoderReady: true, sourceAttached: true)
+        var retry = NativePiPSnapshotRetry()
+        require(retry.beginAttempt(now: 0, eligible: pausedManual), "a paused decoded movie can request its first PiP snapshot after a manual gesture")
+        retry.completeAttempt(frameReady: true, now: 0)
+        require(retry.frameReady, "the paused snapshot completes normal bootstrap readiness without resuming playback")
+        require(!NativePiPPolicy.automaticAllowed(preference: true, eligible: true, playing: false,
+            frameReady: retry.frameReady, outputPrimed: true, sourceAttached: true),
+            "manual readiness never enables automatic PiP for a paused movie")
+    }
+
     private static func verifyLateLifecycleCallbacks() {
+        for bits in 0..<4 {
+            require(!NativePiPPolicy.shouldDeferTeardown(active: bits & 1 != 0, pending: bits & 2 != 0, explicitEnd: true),
+                "explicit source/library/player replacement always releases old playback: \(bits)")
+        }
         for bits in 0..<4 {
             require(NativePiPPolicy.shouldDeferTeardown(active: bits & 1 != 0, pending: bits & 2 != 0) == (bits != 0),
                     "representable teardown waits for active/pending owner: \(bits)")

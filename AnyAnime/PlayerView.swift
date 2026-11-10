@@ -7,13 +7,18 @@ struct PlayerControllerView: UIViewControllerRepresentable {
     let service: AnimeService
     let playback: PlaybackState
 
-    func makeUIViewController(context: Context) -> AnimePlayerViewController {
-        AnimePlayerViewController(episode: episode, service: service, playback: playback)
+    func makeUIViewController(context: Context) -> UIViewController {
+        // A PiP host may outlive its dismissed SwiftUI presentation. End that
+        // decoder explicitly before a different player acquires playback.
+        NotificationCenter.default.post(name: Notification.Name("AnPinime.playerWillStart"), object: nil)
+        if episode.source == .aether { return AetherPlayerViewController(episode: episode, service: service, playback: playback) }
+        return AnimePlayerViewController(episode: episode, service: service, playback: playback)
     }
 
-    func updateUIViewController(_ uiViewController: AnimePlayerViewController, context: Context) { }
-    static func dismantleUIViewController(_ uiViewController: AnimePlayerViewController, coordinator: ()) {
-        uiViewController.shutdown()
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) { }
+    static func dismantleUIViewController(_ uiViewController: UIViewController, coordinator: ()) {
+        (uiViewController as? AetherPlayerViewController)?.shutdown()
+        (uiViewController as? AnimePlayerViewController)?.shutdown()
     }
 }
 
@@ -91,7 +96,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         view.backgroundColor = .black
         guard !episode.source.requiresWebsitePlayback else {
             playback.loading = false
-            playback.error = AetherError.browserRequired.localizedDescription
+            playback.error = AetherCatalogError.invalidRoute.localizedDescription
             return // Aether never installs this controller's Anime/embed scripts.
         }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
@@ -129,13 +134,18 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         #endif
         NotificationCenter.default.addObserver(self, selector: #selector(startWebPictureInPictureInBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(restoreWebForeground), name: UIApplication.didBecomeActiveNotification, object: nil)
+        for name in ["AnPinime.sourceWillChange", "AnPinime.libraryWillChange", "AnPinime.playerWillStart"] {
+            NotificationCenter.default.addObserver(self, selector: #selector(endForReplacement), name: Notification.Name(name), object: nil)
+        }
         if episode.source.isMovie { attemptProviderPlayer() }
         else { attemptDirectPlayer() }
     }
 
-    func shutdown() {
+    @objc private func endForReplacement() { shutdown(force: true) }
+
+    func shutdown(force: Bool = false) {
         guard active else { return }
-        if NativePiPPolicy.shouldDeferTeardown(active: playback.pictureInPictureActive, pending: playback.pictureInPicturePending) {
+        if NativePiPPolicy.shouldDeferTeardown(active: playback.pictureInPictureActive, pending: playback.pictureInPicturePending, explicitEnd: force) {
             // A representable can disappear during system presentation. Its
             // decoder, WKWebView and delegates must live until that owner stops.
             shutdownRequested = true; retainedForPiP = self
@@ -161,11 +171,14 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         playerController?.player?.replaceCurrentItem(with: nil)
         for webView in [directWebView, fallbackWebView] {
             webView?.evaluateJavaScript("window.postMessage({type:'AnPinimeCommand',name:'pipStop'},'*');document.querySelectorAll('video').forEach(v=>v.pause())")
+            webView?.pauseAllMediaPlayback(completionHandler: nil)
             webView?.stopLoading()
             webView?.navigationDelegate = nil
+            webView?.uiDelegate = nil
             ["videoFound", "iframeFound", "playerReady", "playerError", "mediaState", "pipState"].forEach {
                 webView?.configuration.userContentController.removeScriptMessageHandler(forName: $0)
             }
+            webView?.loadHTMLString("", baseURL: nil)
         }
     }
 

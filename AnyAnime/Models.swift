@@ -7,7 +7,7 @@ enum ContentSource: String, CaseIterable, Identifiable {
         switch self {
         case .anime: return "AnimeVietsub"
         case .film4k: return "Anpinime Free"
-        case .aether: return "Aether"
+        case .aether: return "Anpinime VIP"
         case .kkphim: return "Anpinime dự phòng"
         }
     }
@@ -15,7 +15,7 @@ enum ContentSource: String, CaseIterable, Identifiable {
         switch self {
         case .anime: return "Anime"
         case .film4k: return "Anpinime Free"
-        case .aether: return "Aether"
+        case .aether: return "Anpinime VIP"
         case .kkphim: return "Anpinime dự phòng"
         }
     }
@@ -36,6 +36,7 @@ enum ContentDisplayText {
 }
 
 enum EpisodePlayback: Hashable {
+    case aether(mediaType: String, id: Int, season: Int?, episode: Int?)
     case animePage
     case film4k(slug: String, season: Int?, episode: Int?, server: Int)
     case catalogEpisode(detailURL: URL, serverName: String, episodeKey: String)

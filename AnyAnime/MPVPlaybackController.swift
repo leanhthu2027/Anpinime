@@ -188,7 +188,7 @@ final class MPVPlaybackController: UIViewController {
                 withExtendedLifetime(retainedSurface) {}
             }
         }
-        if let pictureInPicture { pictureInPicture.stop(restore: false, completion: destroy) }
+        if let pictureInPicture { pictureInPicture.stop(restore: false, publishState: false, completion: destroy) }
         else { destroy() }
         pictureInPicture = nil
     }
@@ -206,6 +206,10 @@ final class MPVPlaybackController: UIViewController {
     private var playingForPiP: Bool {
         loaded && !preloading && !userPaused && string("pause") == "no" &&
             string("paused-for-cache") != "yes" && string("idle-active") != "yes"
+    }
+
+    private var decoderReadyForPiP: Bool {
+        loaded && !preloading && handle != nil && string("idle-active") != "yes" && decodedVideoSize != nil
     }
 
     private func updateAutomaticPiPReadiness() {
@@ -332,7 +336,9 @@ final class MPVPlaybackController: UIViewController {
             snapshotRetry.completeAttempt(frameReady: false, now: now)
             snapshotRequestedAt = nil
         }
-        guard snapshotRetry.beginAttempt(now: now, eligible: playingForPiP && viewIfLoaded?.window != nil) else { return }
+        let eligible = NativePiPPolicy.canBootstrapFrame(playing: playingForPiP, manualRequest: manuallyRequestedPiP,
+            decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil)
+        guard snapshotRetry.beginAttempt(now: now, eligible: eligible) else { return }
         // Bootstrap from the decoder through mpv's software scaler. GPU screenshots
         // reinitialize the renderer, interrupt playback and crash Metal simulation's
         // shared-buffer readback. Never fall back to that path if the option is absent.
@@ -354,7 +360,7 @@ final class MPVPlaybackController: UIViewController {
               let handle, let videoSize = decodedVideoSize else { return }
         // Once AVKit begins, a pause must not prevent its renderer from being
         // connected. Otherwise resuming inside the PiP window leaves a still frame.
-        guard !userPaused || !start && (playback.pictureInPicturePending || playback.pictureInPictureActive) else { return }
+        guard !userPaused || manuallyRequestedPiP || !start && (playback.pictureInPicturePending || playback.pictureInPictureActive) else { return }
         guard playback.pictureInPictureSupported || !start else { return }
         armPictureInPicture()
         pictureInPicture?.prepare(handle: handle, size: videoSize, start: start)
@@ -486,8 +492,9 @@ final class MPVPlaybackController: UIViewController {
     func perform(_ name: String, value: Double) {
         switch name {
         case "pip":
-            guard loaded, !userPaused, !preloading, playback.pictureInPictureSupported,
-                  string("idle-active") != "yes", viewIfLoaded?.window != nil else { return }
+            guard playback.pictureInPictureSupported,
+                  NativePiPPolicy.canBootstrapFrame(playing: playingForPiP, manualRequest: true,
+                    decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil) else { return }
             manuallyRequestedPiP = true
             automaticPiPPrepared = false
             preparePictureInPicture()

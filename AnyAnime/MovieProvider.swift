@@ -141,6 +141,8 @@ final class MovieProvider: MovieSourceProviding {
     func resolve(_ episode: Episode, refresh: Bool = false) async throws -> ResolvedPlayback {
         guard episode.source == source else { throw MovieSourceError.invalidData }
         switch episode.playback {
+        case .aether:
+            throw MovieSourceError.invalidData
         case .film4k(let slug, let season, let number, let server):
             async let watch = request(MovieCatalog.route("api/watch/" + slug, base: baseURL))
             try await refreshTicket(force: refresh)

@@ -32,15 +32,7 @@ import Foundation
             check(!MovieSourceMigration.migrate(defaults: defaults) && defaults.string(forKey: MovieSourceMigration.selectionKey) == source.rawValue, "unchanged source selection " + source.rawValue)
         }
         check(ContentSource.allCases.map(\.rawValue) == ["anime", "film4k", "aether", "kkphim"], "production source enum exposes exactly the four intended sources")
-        check(ContentSource.aether.title == "Aether" && ContentSource.film4k.title == "Anpinime Free" && ContentSource.kkphim.title == "Anpinime dự phòng", "source labels are unambiguous")
-        let provider: any MovieSourceProviding = AetherProvider()
-        let sections = try await provider.home(onInitial: { _ in fatalError("No fabricated catalog") })
-        check(sections.isEmpty && provider.categories.isEmpty, "website MVP fabricates neither API items nor category routes")
-        do { _ = try await provider.search("movie"); fatalError("No invented search API") } catch AetherError.browserRequired {}
-        do { _ = try await provider.list(path: "media/tmdb-movie-1", page: 1); fatalError("No assumed route") } catch AetherError.browserRequired {}
-        let episode = Episode(title: "Unverified item", url: AetherDomainPolicy.defaultURL, number: 1, season: "", source: .aether)
-        do { _ = try await provider.resolve(episode, refresh: false); fatalError("No native interception") } catch AetherError.browserRequired {}
-        check(true, "router requires the website UI rather than silently replacing it with TMDB or MPV")
+        check(ContentSource.aether.title == "Anpinime VIP" && ContentSource.film4k.title == "Anpinime Free" && ContentSource.kkphim.title == "Anpinime dự phòng", "source labels are unambiguous")
         verifyPiPSessions()
         print("\(checks) Aether migration/bridge checks passed")
     }

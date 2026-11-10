@@ -153,17 +153,15 @@ struct RootView: View {
                 .tabItem { Label("Trang chủ", systemImage: "house.fill") }
                 .tag(0)
 
-            if service.source != .aether {
-                NavigationView { AnimeSearchView() }
-                    .navigationViewStyle(.stack)
-                    .tabItem { Label("Tìm kiếm", systemImage: "magnifyingglass") }
-                    .tag(1)
+            NavigationView { AnimeSearchView() }
+                .navigationViewStyle(.stack)
+                .tabItem { Label("Tìm kiếm", systemImage: "magnifyingglass") }
+                .tag(1)
 
-                NavigationView { BrowseView() }
-                    .navigationViewStyle(.stack)
-                    .tabItem { Label("Thể loại", systemImage: "square.grid.2x2.fill") }
-                    .tag(2)
-            }
+            NavigationView { BrowseView() }
+                .navigationViewStyle(.stack)
+                .tabItem { Label("Thể loại", systemImage: "square.grid.2x2.fill") }
+                .tag(2)
 
             if !service.source.isMovie {
                 NavigationView { AnimeScheduleView() }
@@ -246,9 +244,7 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            if service.source == .aether {
-                AetherBrowserView()
-            } else if service.homeSections.isEmpty && service.homeLoading {
+            if service.homeSections.isEmpty && service.homeLoading {
                 LoadingView(text: "Đang tải danh sách \(service.contentName)…")
             } else if service.homeSections.isEmpty {
                 EmptyStateView(

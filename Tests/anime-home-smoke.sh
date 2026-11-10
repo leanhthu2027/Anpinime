@@ -7,6 +7,7 @@ trap 'rm -f "$ANPINIME_HOME_TEST_BINARY"' EXIT
   AnyAnime/AnimeScheduleStore.swift AnyAnime/AnimeHomeStore.swift AnyAnime/HTMLDocument.swift \
   AnyAnime/HTMLParser.swift AnyAnime/DomainResolver.swift AnyAnime/AnimeService.swift \
   AnyAnime/MovieSourceProviding.swift AnyAnime/MovieSourceMigration.swift \
-  AnyAnime/Aether/AetherDomainResolver.swift AnyAnime/Aether/AetherProvider.swift \
+  AnyAnime/Aether/AetherDomainResolver.swift AnyAnime/Aether/AetherMetadataSettings.swift \
+  AnyAnime/Aether/AetherCatalog.swift AnyAnime/Aether/AetherProvider.swift \
   Tests/AnimeHomeTests.swift -o "$ANPINIME_HOME_TEST_BINARY"
 "$ANPINIME_HOME_TEST_BINARY"

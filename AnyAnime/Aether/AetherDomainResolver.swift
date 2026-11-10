@@ -45,12 +45,11 @@ enum AetherDomainPolicy {
 }
 
 enum AetherError: LocalizedError {
-    case invalidDomain, unavailable, browserRequired, invalidPage
+    case invalidDomain, unavailable, invalidPage
     var errorDescription: String? {
         switch self {
         case .invalidDomain: return "Chọn tên miền HTTPS có trong danh sách Aether chính thức; không kèm đường dẫn hoặc tham số."
         case .unavailable: return "Chưa kết nối được các tên miền Aether. Hãy thử lại hoặc chọn tên miền trong Cài đặt."
-        case .browserRequired: return "Duyệt, tìm kiếm, chọn phim và tập trực tiếp trong Aether."
         case .invalidPage: return "Không mở được trang này trong phiên Aether hiện tại."
         }
     }

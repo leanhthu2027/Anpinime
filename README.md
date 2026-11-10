@@ -1,10 +1,10 @@
 # AnPinime (iOS 15+)
 
-**[IPA test Aether/PiP 2.9.4 (24) — tải và hướng dẫn kiểm tra](AETHER_IPA_BUILD_24.md)**. Gói unsigned đã xác minh identity/checksum; kết quả trên iPhone cần test riêng.
+**Nguồn 2: Anpinime VIP với giao diện native.** Xem [thay đổi và kết quả kiểm thử](ANPINIME_VIP_NATIVE_REPORT.md). IPA 2.9.4 (24) là bản web MVP cũ, không chứa các sửa đổi này; nhánh hiện tại chưa build IPA.
 
-Ứng dụng gồm ba thư viện **Anime**, **Phim**, **Phim AI**. Chạm logo ở trang chủ để chọn lại thư viện. Trong Phim, menu nguồn gồm **Anpinime Free (NguonC)**, **Aether** và **Anpinime dự phòng (KKPhim)**. Dữ liệu của các nguồn không bị trộn chung.
+Ứng dụng gồm ba thư viện **Anime**, **Phim**, **Phim AI**. Chạm logo ở trang chủ để chọn lại thư viện. Trong Phim, menu nguồn gồm **Anpinime Free (NguonC)**, **Anpinime VIP (Aether)** và **Anpinime dự phòng (KKPhim)**. Dữ liệu của các nguồn không bị trộn chung.
 
-Nhánh migration Aether dùng website trong WKWebView cho danh sách, tìm kiếm, thể loại, chi tiết, season/tập và phát phim. Điều khiển phụ đề và nút dịch của website được giữ nguyên nếu website hỗ trợ; app không chuyển video Aether sang MPV. API và route Aether live chưa được xác minh do proxy môi trường chặn truy cập. Xem [báo cáo migration/PiP](AETHER_PIP_MIGRATION_REPORT.md) trước khi đánh giá bản này trên iPhone.
+Anpinime VIP dùng Home, tìm kiếm, thể loại, chi tiết và danh sách phần/tập của Anpinime. Metadata lấy từ TMDB theo cách tích hợp của Streambert; nhập TMDB API Read Access Token tại Cài đặt → Anpinime VIP (lưu trong Keychain). Video Aether chạy bằng WKWebView dưới điều khiển native; các chức năng riêng như server, chất lượng, OpenSubtitles và dịch dùng bảng điều khiển gốc ngay trong trình phát khi có. App không chuyển video Aether sang MPV. Kết nối Aether/TMDB trực tiếp và khả năng PiP trên iPhone chưa được xác nhận trong môi trường Linux này.
 
 Màn hình chờ phim dùng ảnh nền và tên phim nhấp nháy; trình phát có danh sách tập, tua, tốc độ, tỉ lệ hình, khóa chạm, độ sáng và tự phát tập tiếp theo. Luồng native có nhiều track cho phép chọn âm thanh và phụ đề trong cài đặt trình phát.
 
@@ -50,11 +50,13 @@ Dùng API `https://phimapi.com` được công bố tại [tài liệu KKPhim](h
 - Dùng tên miền anime đã lưu trước, resolve lại khi lỗi kết nối; thử lại một lần với lỗi mạng/HTTP 5xx. Yêu cầu WebKit bị hủy khi tác vụ không còn cần.
 - Web player đặt viewport theo thiết bị, bỏ inset tự động và transform của trang; mặc định giữ tỉ lệ video (`contain`). Các tab dùng điều hướng một cột trên điện thoại. Bỏ dòng trạng thái “Đã kết nối”.
 
-### Nguồn phim 2 · Aether (MVP web)
+### Nguồn phim 2 · Anpinime VIP (Aether)
 
-Mở nguồn Aether rồi sử dụng chính thanh tìm kiếm, danh mục, trang chi tiết và danh sách tập trong website. Native UI không giả lập một API Aether bằng TMDB. Chọn Vietnamese trong phụ đề hoặc dùng nút Translate của website nếu có; đây chưa phải xác nhận dịch/phát live trên iPhone.
+Home giữ nguyên banner, poster, card và hiệu ứng. Danh mục gồm Thịnh hành, Phim mới, Phim lẻ, Phim bộ và thể loại phim lẻ/phim bộ; tìm kiếm và chi tiết dùng dữ liệu TMDB. Danh sách tập giữ đúng số phần/tập, kể cả ngoại truyện. ID phim và tập không thay đổi khi đổi tên miền Aether. Đường dẫn phát dựa trên tích hợp [Streambert](https://github.com/truelockmc/streambert).
 
-Resolver đọc liên kết HTTPS từ `https://rentry.co/aetherdomains`, giới hạn hostname và kiểm tra redirect trước khi theo. Snapshot ban đầu: `aether.st`, `aether.ist`, `aether.cx`, `aether.bar`; trạng thái live chưa xác nhận. Cache danh sách 6 giờ, tên miền hoạt động 1 giờ; lỗi không tạo spinner vô hạn. Settings cho phép chọn tên miền trong danh sách hoặc để trống để tự động. Phiên duyệt giữ nguyên tên miền; đổi Settings chỉ áp dụng phiên mới. Dùng **Kết thúc phiên** rồi **Mở Aether** để bắt đầu lại.
+Điều khiển native đồng bộ trạng thái HTML5 video, play/pause, tua, tốc độ và track được video công bố. Phụ đề tiếng Việt được ưu tiên khi có; nếu chỉ có tiếng Anh, có thể mở bảng điều khiển gốc để dùng chức năng dịch sang Vietnamese của Aether khi được hỗ trợ. Nút chất lượng và nút “Máy chủ, chất lượng và dịch phụ đề” mở chính điều khiển gốc; app không tạo danh sách server/chất lượng hoặc hệ thống dịch giả.
+
+Resolver đọc liên kết HTTPS từ `https://rentry.co/aetherdomains`, giới hạn hostname và kiểm tra redirect trước khi theo. Snapshot ban đầu: `aether.st`, `aether.ist`, `aether.cx`, `aether.bar`; trạng thái live chưa xác nhận. Cache danh sách 6 giờ, tên miền hoạt động 1 giờ. Settings cho phép chọn tên miền trong danh sách hoặc để trống để tự động. Đổi tên miền áp dụng lần mở video tiếp theo; video đang phát giữ nguyên kết nối.
 
 Nguồn Phim4K/Core/Free và cấu hình riêng đã ra khỏi production. Mã và test chỉ phục vụ tích hợp cũ nằm trong [archive](Tools/archive/phim4k/README.md). Các parser JSON, relay, transport/probe, MKV, audio và phụ đề dùng chung vẫn được giữ. Lựa chọn nguồn cũ `phim4k` được migrate sang `aether`; lịch sử cũ không được nhận làm lịch sử Aether.
 
