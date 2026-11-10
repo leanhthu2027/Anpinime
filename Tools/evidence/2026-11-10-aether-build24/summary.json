@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "576260bac7012a0d96ef6f300c67d10537d0e601",
+  "applicationTree": "5a4eb728fb9006516886e3b881ea3e95dc1a6c44",
+  "version": "2.9.4",
+  "build": "24",
+  "artifactURL": "https://github.com/pythonltn2000/Anpinime/actions/runs/42795441404/artifacts/13755390351",
+  "expiresAtBangkok": "2026-11-13T17:04:44+07:00",
+  "localChecks": {
+    "status": "PASS",
+    "logSHA256": "3759515c3b9454e5fcf096a7a29340de4ab17c870a0036569e18ff4a66057ad2",
+    "scope": "same application logic before build-counter bump; source plist/project identity checked after bump"
+  },
+  "macOSJobs": 1,
+  "macOSJobSeconds": 264,
+  "linuxHelperRuns": 1,
+  "linuxHelperWorkflowSecondsObservedInGitHubUI": 306,
+  "simulatorJobs": 0,
+  "fullSuiteJobs": 0,
+  "macOSRetries": 0,
+  "physicalIPhonePiP": "NEEDS_PHYSICAL_IPHONE_TEST",
+  "verificationLocation": "Artifact independently downloaded and inspected in separate GitHub Linux helper; receipts verified locally through Git",
+  "helperFinalUIStatus": "Success",
+  "defaultBranchUnchanged": true
+}

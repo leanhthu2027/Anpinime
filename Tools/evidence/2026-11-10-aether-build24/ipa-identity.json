@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "576260bac7012a0d96ef6f300c67d10537d0e601",
+  "applicationTree": "5a4eb728fb9006516886e3b881ea3e95dc1a6c44",
+  "version": "2.9.4",
+  "build": "24",
+  "bundleID": "com.xemphim.aipinime",
+  "ipaSHA256": "1b834c3dd19aecd4a24b22c6a20ec31eeeb148790cd0ce79e3ffee52f56afb81",
+  "unsigned": true,
+  "validation": "Compilation and package identity only",
+  "playbackVerifiedByThisWorkflow": false,
+  "physicalIPhoneAutomaticPiPVerifiedByThisWorkflow": false,
+  "artifactZipSHA256": "77fd09844898bb854dd776e79058e43c770766510ee0badea7361195352c5ee3",
+  "ipaBytes": 30686848,
+  "minimumOS": "15.0",
+  "backgroundModes": [
+    "audio"
+  ],
+  "independentPackageVerification": true
+}

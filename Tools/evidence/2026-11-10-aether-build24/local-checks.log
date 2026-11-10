@@ -1,0 +1,485 @@
+PASS: HTML extraction ignores unsafe links without depending on tables
+PASS: Markdown/plain links are deduplicated
+PASS: rejects unsafe/non-origin input: http://aether.st
+PASS: rejects unsafe/non-origin input: https://user@aether.st
+PASS: rejects unsafe/non-origin input: https://aether.st.evil.org
+PASS: rejects unsafe/non-origin input: https://aether.st:8443
+PASS: rejects unsafe/non-origin input: https://127.0.0.1
+PASS: rejects unsafe/non-origin input: https://aether.st/path
+PASS: rejects unsafe/non-origin input: https://aether.st?x=y
+PASS: rejects unsafe/non-origin input: javascript:alert(1)
+PASS: rejects unsafe/non-origin input: https://aether.st#fragment
+PASS: rejects unsafe/non-origin input: https://aether.st.
+PASS: valid origins canonicalize scheme, case and default port
+PASS: website paths, queries and subtitles stay in the pinned session
+PASS: even official mirrors cannot switch a playing session's origin
+PASS: unavailable preferred seed falls back to a responding verified domain
+PASS: bounded discovery/probes stop after the first valid origin
+PASS: TTL caches successful resolution without probing during playback
+PASS: last working domain persists, is re-probed and official directory TTL survives restart
+PASS: expired working-domain TTL triggers a fresh ordered probe without reusing stale success
+PASS: manual failure does not silently switch domains
+PASS: invalid manual choice preserves previous setting
+PASS: official document can add a policy-compliant origin
+PASS: foreign final responses are never trusted or used as probe destinations
+PASS: expired official directory cache cannot retain an unrefreshed additional host
+PASS: reachable verification may open in WebKit without claiming it is a working mirror
+PASS: challenge responses are never cached as working-domain success
+PASS: redirect delegate rejects before requesting https://evil.example
+PASS: redirect delegate rejects before requesting http://aether.cx
+PASS: redirect delegate rejects before requesting https://user@aether.cx
+PASS: trusted redirect chain bounded at attempt 1
+PASS: trusted redirect chain bounded at attempt 2
+PASS: trusted redirect chain bounded at attempt 3
+PASS: trusted redirect chain bounded at attempt 4
+PASS: cancellation is not converted to a provider error
+35 Aether domain checks passed
+PASS: saved source-2 selection migrates to Aether
+PASS: Aether occupies the source-2 slot
+PASS: migration preserves AnPinime.AIDrama.positions.series-1
+PASS: migration preserves AnPinime.selectedLibrary
+PASS: migration preserves AnPinime.searchHistory.anime
+PASS: migration preserves AnPinime.searchHistory.kkphim
+PASS: migration preserves AnPinime.searchHistory.phim4k
+PASS: migration preserves AnPinime.searchHistory.film4k
+PASS: migration is idempotent
+PASS: old movie IDs/searches are not reinterpreted as Aether history
+PASS: new history cannot overwrite the retained legacy namespace
+PASS: unchanged source selection film4k
+PASS: unchanged source selection kkphim
+PASS: production source enum exposes exactly the four intended sources
+PASS: source labels are unambiguous
+PASS: website MVP fabricates neither API items nor category routes
+PASS: router requires the website UI rather than silently replacing it with TMDB or MPV
+PASS: PiP cannot start before HTML video reports support
+PASS: manual request records pending ownership before JavaScript
+PASS: late inline snapshot cannot clear pending PiP
+PASS: a rejected iframe snapshot cannot update the owner's playback fields
+PASS: another iframe cannot reject the selected video
+PASS: only the matching presentation event establishes active state
+PASS: inline media snapshots do not close active PiP
+PASS: a delayed timeout cannot reject an active system presentation
+PASS: matching stop releases PiP ownership
+PASS: an old request timeout cannot cancel a retry
+PASS: Promise rejection/timeout enables a later retry
+PASS: website-controlled PiP is adopted without a native request
+PASS: website-controlled stop releases the adopted session
+30 Aether migration/bridge checks passed
+PASS: all six actual-readiness gates are required across 64 combinations
+PASS: buffering or paused playback disarms automatic entry
+PASS: detaching the real source view disarms automatic entry
+PASS: ineligible decoder state never submits a screenshot
+PASS: waiting for valid dimensions does not spend the burst
+PASS: eligible snapshot attempt 1 is allowed
+PASS: only one screenshot command may be pending
+PASS: eligible snapshot attempt 2 is allowed
+PASS: only one screenshot command may be pending
+PASS: eligible snapshot attempt 3 is allowed
+PASS: only one screenshot command may be pending
+PASS: three failed frames require a full two-second cooldown
+PASS: a fourth attempt can recover in the same playback session
+PASS: only acknowledged frame readiness completes bootstrap
+PASS: a ready foreground sample stops further snapshot requests
+PASS: a command starts pending
+PASS: an expired async command can be replaced
+PASS: unsolicited or duplicate completion cannot invent frame readiness
+PASS: retry remains available after ignored duplicate completion
+PASS: timeout failures count toward burst throttling
+PASS: timeout recovery resumes after cooldown
+PASS: a new playback session has independent retry state
+PASS: Control Center return preserves the armed inline bridge
+PASS: actual background return can release the prior bridge
+PASS: active or pending PiP closes through its asynchronous stop handshake
+PASS: only the live current PiP controller accepts controls across 16 combinations
+PASS: restore success requires owner, foreground app/scene, attached source and layout across 32 combinations
+PASS: a restore acknowledgement cannot invent a request
+PASS: replacement restore requests get a new identity
+PASS: an out-of-order acknowledgement preserves the replacement
+PASS: the current restore completion is consumed exactly once
+PASS: a duplicate restore acknowledgement is ignored
+PASS: restore ownership clears before external completion code runs
+PASS: an old completion cannot clear a reentrant restore request
+PASS: the reentrant request can finish independently
+PASS: timeout or teardown can consume the current restore request
+PASS: a late timeout cannot reject a newer restore request
+PASS: restore remains usable after cancellation and timeout
+PASS: the first rendered frame owns delivery
+PASS: the frame reaches the asynchronous consumer queue
+PASS: the render queue cannot accumulate frames while consumer delivery is pending
+PASS: a cancelled or deallocated frame owner still completes consumer cleanup
+PASS: consumer cleanup releases the gate after owner cancellation
+PASS: an early producer failure does not strand delivery ownership
+PASS: only one of 128 concurrent frame submissions wins delivery in round 1
+PASS: only one of 128 concurrent frame submissions wins delivery in round 2
+PASS: representable teardown waits for active/pending owner: 0
+PASS: representable teardown waits for active/pending owner: 1
+PASS: representable teardown waits for active/pending owner: 2
+PASS: representable teardown waits for active/pending owner: 3
+PASS: lifecycle ownership rejects stale controller/teardown: stopped=false, matches=false
+PASS: lifecycle ownership rejects stale controller/teardown: stopped=false, matches=true
+PASS: lifecycle ownership rejects stale controller/teardown: stopped=true, matches=false
+PASS: lifecycle ownership rejects stale controller/teardown: stopped=true, matches=true
+PASS: late didStart cannot resurrect a torn-down PiP session
+PASS: an old didStop cannot clear the current controller's active state
+56 native PiP policy checks passed
+PASS: fullscreen isolation, playback commands, access notice filtering, pause preservation, seek limits, fill persistence and challenge visibility
+PASS: ad-before-movie, same-element JW preroll, ad end isolation and unrelated HLS rejection
+PASS: configured movie handoff during preroll and before video creation
+PASS: StreamC ad-free autoplay preserves the sealed decoder and license
+PASS: actual JW audio/caption selection, off, caption visibility and 3x speed
+PASS: WebKit PiP single ownership, actual commands, preference, pause, pending retry and inline layout
+PASS: Swift/WebKit PiP session/request protocol, native payloads, presentation events, timeout/retry, rejection and stale-completion isolation
+PASS: progressing readyState=2, pause-ad isolation, decoder preservation and no speculative blob handoff
+PASS: anime episode-scoped start, original late resume action, storage isolation, pause/seek and PiP/native recovery preservation
+PASS: Aether website controls/translation preserved, no MPV handoff, shared PiP identity, active ownership, rejection and honest automatic support
+PASS: Ordinary catalog with Cloudflare script is not a CAPTCHA
+PASS: Player content and footer text do not cause verification popup
+PASS: Managed challenge is recognized
+PASS: Vietnamese security page is recognized
+PASS: Current .news browser check is not accepted as anime content
+PASS: Current .news check cannot validate a domain or populate episodes
+PASS: Interactive verification is recognized
+PASS: Duplicate updated-anime row is removed
+PASS: Catalog links resolve on current domain
+All parser regressions passed
+PASS: Lazy poster URL takes priority over inline placeholder
+PASS: Original artwork takes priority over placeholder src
+PASS: Movie catalog uses JSON and removes duplicate provider IDs
+PASS: Vietnamese title and source identity are preserved
+PASS: Movie artwork resolves within its own provider
+PASS: TV seasons are sorted independently of episode numbers
+PASS: Fallback player opens the selected season and episode
+PASS: Stream selection never substitutes a different season
+PASS: Missing episodes do not silently play another episode
+PASS: Feature films expose a playable entry even when detail omits expiring streams
+PASS: Public catalog retains separate provider and image CDN even without trailing slash
+PASS: Public catalog populates horizontal bannerURL for Featured Hero Carousel
+PASS: KKPhim provides all 6 requested category rows plus Mới cập nhật
+PASS: KKPhim provides full genre and country browsing list
+PASS: Free1 detail maps episodes to the KKPhim resolver
+PASS: Free2 nested episodes and embed links are supported
+PASS: Runtime API link fields preserve separate subtitled/dubbed servers
+PASS: Extensionless HLS resolver links use native playback rather than a website
+PASS: Provider metadata cannot become executable URL schemes
+PASS: The same path in different sources has a different catalog identity
+PASS: Movie ratings do not expose floating-point precision artifacts
+PASS: Complete PNG envelope is removed without altering video bytes
+PASS: Unwrapped media passes through unchanged
+PASS: An ordinary PNG without appended media is not treated as video
+PASS: Truncated PNG chunks never cause an out-of-bounds read
+PASS: HLS init, track and segment URLs are routed through the local adapter
+PASS: AVPlayer's initial two-byte probe is supported
+PASS: Suffix byte ranges use normalized media size
+PASS: Unsatisfiable byte ranges are rejected
+PASS: Quality choices come from actual HLS variants and deduplicate audio/codec variants
+PASS: A resolution limit preserves the available codec/audio alternatives
+PASS: Media playlists do not fabricate unsupported resolutions
+PASS: All 1200 anime episodes survive preview merge and sort numerically
+PASS: Detail page resolves its full watch page
+PASS: Anime domain recovery preserves episode path and query
+PASS: Numeric label is used instead of an opaque watch-page ID
+PASS: Source 1 routes to NguonC detail API
+PASS: Source 3 routes to KKPhim detail API
+PASS: Same movie slug remains isolated across providers
+PASS: NguonC nested episode servers preserve source identity
+PASS: KKPhim episodes never use source 2 identity
+PASS: KKPhim rejects NguonC category routes
+PASS: NguonC rejects KKPhim category routes
+PASS: Absolute foreign catalog routes are rejected
+PASS: Explicit movie HLS is preferred over an advertising web embed
+PASS: Opaque player links are not mistaken for native media
+PASS: Search history trims and deduplicates completed searches
+PASS: Search history never leaks across providers
+PASS: Search history persists when the store is recreated
+PASS: Recent searches are bounded and sorted newest first
+PASS: Individual search history entries can be deleted
+PASS: Clearing history only clears the selected provider
+PASS: Refreshing reordered public servers and episodes retains the selected film link
+PASS: A missing server never plays another dub or subtitle version
+PASS: Anime excludes login redirects, usernames, comment permalinks, quoted episodes and script strings
+PASS: Anime preserves server identity from the actual episode container
+PASS: Watch-page discovery skips login redirects and comment links
+PASS: Unmarked legacy anchors retain supplied episodes and server while excluding comments, menus, forms, usernames, mismatched numbers and other shows
+PASS: Legacy recovery preserves the source-supplied episode query
+PASS: Watch discovery follows the first actual unmarked legacy episode without inventing a URL
+PASS: Unmarked legacy anchors respect a canonical alias with the same stable anime ID
+PASS: KKPhim exposes all twelve lists shown on its website
+PASS: KKPhim retains its complete genre and country menus
+PASS: NguonC exposes all 22 website genres
+PASS: NguonC uses its own AI movie list
+PASS: NguonC genre slugs are not replaced by KKPhim slugs
+PASS: KKPhim website-only lists resolve to its own detail API
+PASS: Website list parsing keeps the actual movie title and episode status
+PASS: Bleach episode links keep both the display number and opaque episode ID
+PASS: NguonC website menus convert to its own API routes and discard foreign links
+PASS: Anime with .html in animeURL correctly resolves episodes
+PASS: Complex episode titles like 'Tập 1 - Vietsub Full HD' are properly extracted
+PASS: Schedule parses Monday Next.js streaming hydration payload
+PASS: Schedule parses Sunday Next.js streaming hydration payload
+PASS: Streamed episode metadata restores 12 real entries across different detail/watch routes
+PASS: Complete streamed episode lists do not need a second watch request
+PASS: Partial lists still allow a watch page refresh
+PASS: Episode URLs belong to the requested show
+PASS: Metadata parsing does not block on the episode list
+PASS: Another show never supplies episodes
+PASS: Distinct episode servers and special are preserved
+PASS: A schedule item with no weekday is not assigned Monday
+Extended anime and source isolation regressions passed
+PASS: Legacy schedule reads Vietnamese weekday and time
+PASS: Legacy schedule preserves cards with and without a time
+PASS: Legacy schedule links open the same anime
+PASS: Schedule cache survives a store reload
+PASS: Empty schedule never replaces the last good cache
+PASS: A real detail shape can validate its anime domain
+PASS: A verification page never validates an anime domain
+PASS: The home page is not accepted as proof of a detail page
+PASS: Schedule JSON preserves nested objects and braces inside strings
+PASS: Invalid anime host with empty labels is rejected
+PASS: Misplaced anime URL is moved to the anime setting
+PASS: Anime URL cannot remain a Phim4K Free override
+PASS: A real Free override remains independent
+PASS: Watch discovery accepts the real latest-episode link
+PASS: Canonical alias with the same anime ID retains episodes
+PASS: Canonical links cannot select another anime ID
+PASS: A comment captcha does not hide a real anime detail page
+PASS: Streamed episodes decode JSON regardless of property order and whitespace
+PASS: Source-2 relay preserves ts without signed query values
+PASS: Source-2 relay preserves m4s without signed query values
+PASS: Source-2 relay preserves mp4 without signed query values
+PASS: Source-2 relay preserves aac without signed query values
+PASS: Source-2 relay preserves vtt without signed query values
+PASS: Source-2 relay preserves m3u8 without signed query values
+PASS: Extensionless source-2 HLS remains a playlist
+PASS: Unknown media suffixes remain opaque
+PASS: Core origin compares case-insensitive host and effective HTTPS port
+PASS: Core credentials cannot follow a changed scheme, port, host or userinfo
+PASS: Core credentials cannot follow a changed scheme, port, host or userinfo
+PASS: Core credentials cannot follow a changed scheme, port, host or userinfo
+PASS: Core credentials cannot follow a changed scheme, port, host or userinfo
+PASS: Core credentials cannot follow a changed scheme, port, host or userinfo
+PASS: HTTP loopback requires an explicit fixture opt-in
+PASS: Fixture opt-in never permits public HTTP endpoints
+PASS: An original HTTP media URL is allowed only by media policy, never Core or gateway policy
+PASS: HTTP media loopback still requires an explicit local fixture
+PASS: Non-HTTP media/gateway schemes are rejected
+PASS: A same-host port change is cross-origin and removes sensitive headers
+PASS: Cross-origin media redirects preserve only required non-sensitive media headers
+PASS: A redirect cannot reattach session cookies or rewrite the server-supplied signed URL
+PASS: HTTPS downgrade is rejected even when HTTP media and loopback fixtures are enabled
+PASS: An HTTP-to-HTTPS media redirect is allowed while sensitive headers are stripped
+PASS: Media session follows an allowed cross-origin loopback redirect
+PASS: Actual cross-origin redirect never sends Core/session credentials to the media origin
+PASS: Actual redirected media request keeps Range and User-Agent
+PASS: Core-only session refuses cross-origin redirects before sending its API key
+PASS: Same-origin Core redirects retain the required client header
+PASS: Redirect count is bounded per task and resets for a new request; iteration=0, status=302, responsePath=/loop/2, serverRequests=["/loop/0", "/loop/1", "/loop/2"]
+PASS: Redirect count is bounded per task and resets for a new request; iteration=1, status=302, responsePath=/loop/2, serverRequests=["/loop/0", "/loop/1", "/loop/2"]
+PASS: Catalog identity follows film4k
+PASS: Home/search/category/detail/playback only request phim.nguonc.com
+PASS: Native content never falls back to an advertising page
+PASS: Search keyword remains intact
+PASS: Failure never switches providers
+PASS: Catalog identity follows kkphim
+PASS: Home/search/category/detail/playback only request phimapi.com
+PASS: Native content never falls back to an advertising page
+PASS: Search keyword remains intact
+PASS: KKPhim refreshes its taxonomy from its own API
+PASS: KKPhim website-only lists retain provider identity
+PASS: Ongoing list paginates on KKPhim's actual website route
+PASS: Website results open details through the same provider's API
+PASS: Failure never switches providers
+Public provider regressions passed
+PASS: Creating an anime/movie service does not create a verification browser
+PASS: Cold Home returns parsed cards
+PASS: Cold Home makes one catalog request, with zero shortlink or legacy detail probes
+PASS: An ordinary cold Home never instantiates the WebKit verification path
+PASS: Only successful parsed Home becomes a verified domain
+PASS: Parsed Home survives a new service instance without HTML or cookies
+PASS: Warm Home is usable while its refresh response remains gated
+PASS: Displaying warm cached cards does not instantiate a verification browser
+PASS: The real network response replaces the cached cards
+PASS: Warm refresh also avoids duplicate domain/catalog requests
+PASS: Refreshing ordinary warm Home still does not instantiate a verification browser
+PASS: A manual catalog never displays the automatic catalog snapshot
+PASS: Manual Home persists despite origin trailing-slash differences
+PASS: A manual snapshot is isolated from automatic and other manual catalogs
+PASS: An expired Home snapshot cannot remain visible forever
+PASS: A future-dated snapshot is rejected
+PASS: Movie sources cannot overwrite anime Home
+PASS: A challenged Home lazily creates exactly one browser and uses the existing verification flow
+PASS: Repeated access preserves the same verification browser instance
+PASS: A challenge is never persisted as cards or a verified domain
+PASS: A dead stale automatic host triggers discovery then one request to the new host
+PASS: Domain recovery publishes the current Home and rebases its cards
+PASS: Recovered catalog identities never retain the obsolete hostname
+PASS: An unexpected third-party Home redirect is never shown as anime
+PASS: A selected manual Home cannot silently redirect to the automatic catalog
+PASS: A manual-source challenge creates its browser on demand without switching catalogs
+ANIME_HOME_FIXTURE cold_content_ms=7 warm_content_ms=1 cold_requests=1 warm_requests=1; local fixture timings only
+PASS: Native feed skips non-series rows and duplicate video IDs
+PASS: Feed keeps exact series/video identities and native total independently of ranking catalogs
+PASS: Landscape recommendation keeps the actual episode number
+PASS: Feed introduction is not substituted for a numbered episode
+PASS: feed service refusal has the expected error
+PASS: truncated feed protobuf has the expected error
+PASS: Catalog preserves numeric Int64 ID beyond 2^53
+PASS: Catalog trims title and retains complete-series count
+PASS: Catalog filters invalid cover candidates
+PASS: Catalog exposes the actual next-page cursor
+PASS: Catalog retains native has_more independently of the cursor
+PASS: Home recommendation continuation does not fabricate a cursor
+PASS: Empty terminal catalog page is valid
+PASS: empty catalog without explicit pagination envelope has the expected error
+PASS: Card metadata comes from native view count and category text
+PASS: Existing saved series decode when newer card metadata is absent
+PASS: String Int64 catalog IDs remain exact
+PASS: status-zero empty catalog has the expected error
+PASS: duplicate catalog IDs has the expected error
+PASS: catalog nonzero service status has the expected error
+PASS: catalog nonzero business status has the expected error
+PASS: catalog missing service status has the expected error
+PASS: invalid catalog ID true has the expected error
+PASS: invalid catalog ID 0 has the expected error
+PASS: invalid catalog ID -1 has the expected error
+PASS: invalid catalog ID 1.5 has the expected error
+PASS: invalid catalog ID not-an-id has the expected error
+PASS: invalid catalog ID 9223372036854775808 has the expected error
+PASS: Library route uses original scene 6 through GET
+PASS: Library scene 6 forwards the server cursor unchanged
+PASS: Library route uses original scene 7 through GET
+PASS: Library scene 7 forwards the server cursor unchanged
+PASS: Library route uses original scene 8 through GET
+PASS: Library scene 8 forwards the server cursor unchanged
+PASS: Home continuation carries the last 20 actual loaded collection identities
+PASS: Home uses actual loaded count without fabricating a session ID or cursor
+PASS: Home refresh starts a new actual recommendation state
+PASS: Four selected groups use original POST JSON category endpoint
+PASS: All three exact native category IDs remain separate filters
+PASS: Time window uses native recent_days filter and exact next cursor
+PASS: Service metadata supplies all four filter groups in order
+PASS: Metadata preserves the server category IDs and release windows
+PASS: All choices clear their group without inventing a category ID
+PASS: incomplete four-group metadata has the expected error
+PASS: unsupported time window has the expected error
+PASS: invalid loaded home identity has the expected error
+PASS: duplicate loaded home identity has the expected error
+PASS: Playlist returns all 40 real episode rows
+PASS: Playlist sorts actual sequence numbers
+PASS: Every playlist Int64 episode ID remains exact
+PASS: Every episode retains its parent series
+PASS: Intro is excluded without discarding any real episode
+PASS: missing real episode has the expected error
+PASS: intro replacing a real episode has the expected error
+PASS: status-zero empty playlist has the expected error
+PASS: playlist without a reported series count has the expected error
+PASS: duplicate episode IDs has the expected error
+PASS: duplicate episode numbers has the expected error
+PASS: conflicting sequence and displayed number has the expected error
+PASS: numbering gap despite 40 rows has the expected error
+PASS: boolean episode ID has the expected error
+PASS: Paid unpurchased episodes lock; purchased and limited-free episodes unlock
+PASS: locked episode stream has the expected error
+PASS: JSON response preserves selected episode media URL
+PASS: Resolved stream uses provider user agent without account cookies
+PASS: JSON selects the matching row instead of the first row
+PASS: JSON with no matching episode has the expected error
+PASS: JSON with duplicate matching rows has the expected error
+PASS: JSON with wrong series has the expected error
+PASS: JSON with no series identity has the expected error
+PASS: JSON with wrong sequence has the expected error
+PASS: JSON contradictory paid-video and aweme identities has the expected error
+PASS: JSON intro instead of episode has the expected error
+PASS: status-zero empty video rows has the expected error
+PASS: Aweme paid-content series identity is validated when collection detail is absent
+PASS: conflicting paid-content series has the expected error
+PASS: JSON paid-content is_partial_preview has the expected error
+PASS: JSON paid-content should_show_preview has the expected error
+PASS: JSON paid-content is_paid_video_encrypted has the expected error
+PASS: JSON token-required video has the expected error
+PASS: unsafe/non-media URL https://user:password@media.example/episode.mp4 has the expected error
+PASS: unsafe/non-media URL javascript:alert(1) has the expected error
+PASS: unsafe/non-media URL https://media.example/episode.mp4#fragment has the expected error
+PASS: unsafe/non-media URL file:///tmp/episode.mp4 has the expected error
+PASS: unsafe/non-media URL https://media.example has the expected error
+PASS: unsafe/non-media URL https://media.example:0/episode.mp4 has the expected error
+PASS: unsafe/non-media URL https://media.example/metadata.json has the expected error
+PASS: unsafe/non-media URL https://media.example/player.html has the expected error
+PASS: unsafe/non-media URL https://media.example/tiktok/md/collection/video/v1/ has the expected error
+PASS: unsafe/non-media URL http://127.0.0.1:8768/media/episode.mp4 has the expected error
+PASS: Loopback media requires the explicit fixture flag
+PASS: JSON filters invalid candidates and supports the H264 address
+PASS: JSON wire signature works even with a protobuf content type
+PASS: oversized video response has the expected error
+PASS: Protobuf fixture matches the independent 93-byte golden
+PASS: Protobuf golden resolves exact Int64 episode, series and sequence
+PASS: Unknown varint, fixed64, bytes and fixed32 fields are skipped at nested and response levels
+PASS: Protobuf selects the matching row instead of the first row
+PASS: protobuf wrong episode ID has the expected error
+PASS: protobuf contradictory paid-video and aweme identities has the expected error
+PASS: protobuf paid-content episode differs from selected video has the expected error
+PASS: protobuf wrong series has the expected error
+PASS: protobuf wrong sequence has the expected error
+PASS: protobuf duplicate selected rows has the expected error
+PASS: protobuf intro row has the expected error
+PASS: protobuf missing series identity has the expected error
+PASS: protobuf service error has the expected error
+PASS: protobuf business error has the expected error
+PASS: protobuf paid-content preview/encryption flag 7 has the expected error
+PASS: protobuf paid-content preview/encryption flag 8 has the expected error
+PASS: protobuf paid-content preview/encryption flag 17 has the expected error
+PASS: protobuf token-required video has the expected error
+PASS: protobuf conflicting paid-content series has the expected error
+PASS: Protobuf paid-content identity is checked without collection detail
+PASS: Protobuf H264 address field is supported
+PASS: protobuf unsafe media URL https://user:password@media.example/episode.mp4 has the expected error
+PASS: protobuf unsafe media URL javascript:alert(1) has the expected error
+PASS: protobuf unsafe media URL https://media.example/episode.mp4#fragment has the expected error
+PASS: protobuf unterminated tag has the expected error
+PASS: protobuf overflowing varint has the expected error
+PASS: protobuf truncated nested payload has the expected error
+PASS: protobuf truncated fixed64 has the expected error
+PASS: protobuf truncated fixed32 has the expected error
+PASS: protobuf zero field tag has the expected error
+PASS: protobuf unsupported group wire type has the expected error
+PASS: protobuf duplicate known scalar has the expected error
+PASS: protobuf wrong known wire type has the expected error
+PASS: status-zero protobuf without video rows has the expected error
+PASS: Injected loopback provider decodes fixture data through URLSession
+PASS: URLProtocol fixture handles the only API request without external networking
+PASS: API request disables cookie handling and strips inherited account cookies
+PASS: API request strips inherited account authorization
+PASS: API request uses its configured provider user agent
+PASS: unpermitted API base http://127.0.0.1:8768 has the expected error
+PASS: unpermitted API base http://api.fixture.example has the expected error
+PASS: unpermitted API base https://user:password@api.fixture.example has the expected error
+PASS: unpermitted API base https://api.fixture.example#fragment has the expected error
+PASS: Rejected API bases never reach the network transport
+PASS: Category reply caches native metadata without another request
+PASS: Both ranking lists and new works use GET transport
+PASS: Category transport uses original JSON POST and conversion header
+PASS: Category requests preserve whole native selected objects and each unselected All object
+PASS: All new library routes preserve account-free transport isolation
+All AI drama provider regressions passed
+RANGE_READY: verified fixture pid=5287 port=35805
+RANGE: request path=range port=35805
+RANGE: response path=range status=206 bytes=2048 truncated=true
+RANGE: request path=ignore port=35805
+RANGE: response path=ignore status=200 bytes=2048 truncated=true
+RANGE: request path=redirect port=35805
+RANGE: response path=redirect status=206 bytes=2048 truncated=true
+RANGE: request path=denied port=35805
+RANGE: response path=denied status=403 bytes=0 truncated=false
+RANGE: request path=json port=35805
+RANGE: response path=json status=200 bytes=21 truncated=false
+PASS: bounded GET against virtual 12 GB resource, 206/200/redirect/403/JSON
+RANGE_HTTP: method=GET path=/range range=bytes=100-199 port=35805
+RANGE_HTTP: method=GET path=/range range=bytes=12285764199- port=35805
+RANGE_HTTP: method=GET path=/range range=bytes=-1024 port=35805
+RANGE_HTTP: method=GET path=/range range=bytes=12285989889- port=35805
+RANGE_HTTP: method=GET path=/range range=bytes=0- port=35805
+RANGE_HTTP: method=GET path=/range range= port=35805
+RANGE_HTTP: method=GET path=/ignore range=bytes=0-2047 port=35805
+RANGE_HTTP: method=HEAD path=/range range= port=35805
+RANGE_HTTP: method=GET path=/redirect range= port=35805
+PASS: virtual-origin open, closed, suffix, beyond EOF, ignored range, HEAD and redirect
+PASS: offline local regressions completed; iOS build/playback/PiP still require Apple runtime validation

@@ -1,5 +1,7 @@
 # AnPinime (iOS 15+)
 
+**[IPA test Aether/PiP 2.9.4 (24) — tải và hướng dẫn kiểm tra](AETHER_IPA_BUILD_24.md)**. Gói unsigned đã xác minh identity/checksum; kết quả trên iPhone cần test riêng.
+
 Ứng dụng gồm ba thư viện **Anime**, **Phim**, **Phim AI**. Chạm logo ở trang chủ để chọn lại thư viện. Trong Phim, menu nguồn gồm **Anpinime Free (NguonC)**, **Aether** và **Anpinime dự phòng (KKPhim)**. Dữ liệu của các nguồn không bị trộn chung.
 
 Nhánh migration Aether dùng website trong WKWebView cho danh sách, tìm kiếm, thể loại, chi tiết, season/tập và phát phim. Điều khiển phụ đề và nút dịch của website được giữ nguyên nếu website hỗ trợ; app không chuyển video Aether sang MPV. API và route Aether live chưa được xác minh do proxy môi trường chặn truy cập. Xem [báo cáo migration/PiP](AETHER_PIP_MIGRATION_REPORT.md) trước khi đánh giá bản này trên iPhone.

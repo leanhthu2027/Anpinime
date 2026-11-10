@@ -1,0 +1,119 @@
+{
+  "repository": "pythonltn2000/Anpinime",
+  "sourceCommit": "576260bac7012a0d96ef6f300c67d10537d0e601",
+  "applicationTree": "5a4eb728fb9006516886e3b881ea3e95dc1a6c44",
+  "sourceBranch": "feature/aether-migration-pip-recovery",
+  "version": "2.9.4",
+  "build": "24",
+  "workflow": "build-ipa-light.yml",
+  "phase": "verified",
+  "updatedAt": "2026-11-10T10:05:20.526Z",
+  "helper": {
+    "branch": "automation/ipa-aether-20261110",
+    "runID": 42795418482,
+    "url": "https://github.com/pythonltn2000/Anpinime/actions/runs/42795418482",
+    "scriptElapsedSeconds": 295.627
+  },
+  "budget": {
+    "macOSJobsRequested": 1,
+    "maxMacOSMinutes": 20,
+    "simulatorJobs": 0,
+    "fullSuiteJobs": 0,
+    "buildRetries": 0
+  },
+  "observed": [
+    {
+      "at": "2026-11-10T10:01:03.845Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:01:35.312Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:02:06.687Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:02:38.392Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:03:10.068Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:03:41.445Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:04:12.844Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:04:44.428Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-10T10:05:16.028Z",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "buildRun": {
+    "id": 42795441404,
+    "url": "https://github.com/pythonltn2000/Anpinime/actions/runs/42795441404",
+    "headSHA": "576260bac7012a0d96ef6f300c67d10537d0e601",
+    "event": "workflow_dispatch",
+    "status": "completed",
+    "conclusion": "success",
+    "runAttempt": 1,
+    "createdAt": "2026-11-10T10:00:28Z",
+    "updatedAt": "2026-11-10T10:04:56Z"
+  },
+  "jobs": [
+    {
+      "id": 129759337298,
+      "name": "build",
+      "conclusion": "success",
+      "startedAt": "2026-11-10T10:00:32Z",
+      "completedAt": "2026-11-10T10:04:56Z",
+      "elapsedSeconds": 264
+    }
+  ],
+  "artifact": {
+    "id": 13755390351,
+    "name": "AnPinime_UNSIGNED",
+    "bytes": 30631993,
+    "digest": "sha256:77fd09844898bb854dd776e79058e43c770766510ee0badea7361195352c5ee3",
+    "expiresAt": "2026-11-13T10:04:44Z",
+    "url": "https://github.com/pythonltn2000/Anpinime/actions/runs/42795441404/artifacts/13755390351"
+  },
+  "packageIdentity": {
+    "sourceCommit": "576260bac7012a0d96ef6f300c67d10537d0e601",
+    "applicationTree": "5a4eb728fb9006516886e3b881ea3e95dc1a6c44",
+    "version": "2.9.4",
+    "build": "24",
+    "bundleID": "com.xemphim.aipinime",
+    "ipaSHA256": "1b834c3dd19aecd4a24b22c6a20ec31eeeb148790cd0ce79e3ffee52f56afb81",
+    "unsigned": true,
+    "validation": "Compilation and package identity only",
+    "playbackVerifiedByThisWorkflow": false,
+    "physicalIPhoneAutomaticPiPVerifiedByThisWorkflow": false,
+    "artifactZipSHA256": "77fd09844898bb854dd776e79058e43c770766510ee0badea7361195352c5ee3",
+    "ipaBytes": 30686848,
+    "minimumOS": "15.0",
+    "backgroundModes": [
+      "audio"
+    ],
+    "independentPackageVerification": true
+  }
+}
