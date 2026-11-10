@@ -16,11 +16,12 @@ struct WebPiPSessionState {
         return sessionID
     }
 
-    mutating func snapshot(_ state: [String: Any]) {
-        guard let session = state["pipSessionID"] as? String, !session.isEmpty else { return }
+    @discardableResult
+    mutating func snapshot(_ state: [String: Any]) -> Bool {
+        guard let session = state["pipSessionID"] as? String, !session.isEmpty else { return false }
         let request = state["pipRequestID"] as? String ?? ""
         if pending || active {
-            guard session == sessionID, request == requestID else { return }
+            guard session == sessionID, request == requestID else { return false }
         } else if sessionID != session {
             sessionID = session; requestID = nil; error = ""
         }
@@ -30,6 +31,7 @@ struct WebPiPSessionState {
         } else if !active, state["pipPending"] as? Bool != true, request == requestID {
             pending = false; error = state["pipError"] as? String ?? ""
         }
+        return true
     }
 
     mutating func event(_ state: [String: String]) {

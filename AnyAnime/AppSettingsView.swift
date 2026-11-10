@@ -34,8 +34,10 @@ struct AppSettingsView: View {
                     Button(action: onChooseLibrary) { Label("Đổi thư viện", systemImage: "square.grid.2x2") }
                 }
                 if !service.source.isMovie { LabeledContentCompat(title: "Máy chủ", value: service.baseURL.host ?? "Đang kết nối") }
-                Button("Làm mới danh sách và kết nối") { Task { await service.loadHome(forceDomainRefresh: true) } }
-                    .disabled(service.homeLoading)
+                if service.source != .aether {
+                    Button("Làm mới danh sách và kết nối") { Task { await service.loadHome(forceDomainRefresh: true) } }
+                        .disabled(service.homeLoading)
+                }
             }
             if service.source == .anime {
                 Section {

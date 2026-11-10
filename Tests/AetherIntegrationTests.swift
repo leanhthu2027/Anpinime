@@ -54,6 +54,7 @@ import Foundation
         check(pip.begin(requestID: "first") == "video-1" && pip.pending, "manual request records pending ownership before JavaScript")
         pip.snapshot(snapshot())
         check(pip.pending, "late inline snapshot cannot clear pending PiP")
+        check(!pip.snapshot(snapshot("foreign-frame", "first")), "a rejected iframe snapshot cannot update the owner's playback fields")
         pip.event(["sessionID":"other-frame","requestID":"first","status":"error"])
         check(pip.pending, "another iframe cannot reject the selected video")
         pip.event(["sessionID":"video-1","requestID":"first","status":"active"])

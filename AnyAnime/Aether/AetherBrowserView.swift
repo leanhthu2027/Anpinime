@@ -12,7 +12,7 @@ struct AetherBrowserView: View {
                     .disabled(!session.canGoBack).accessibilityLabel("Quay lại trong Aether")
                 Text("Tìm kiếm và thể loại trong Aether").font(.caption).frame(maxWidth: .infinity)
                 Button { session.requestPiP() } label: { Image(systemName: "pip.enter") }
-                    .disabled(!session.pip.supported || session.pip.pending || session.pip.active)
+                    .disabled(!session.playing || !session.pip.supported || session.pip.pending || session.pip.active)
                     .accessibilityLabel("Mở cửa sổ nổi Aether").accessibilityIdentifier("aether.pip")
                 Button("Kết thúc phiên") { session.shutdown() }
                     .font(.caption).accessibilityIdentifier("aether.end-session")
@@ -57,6 +57,7 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     @Published private(set) var ended = false
     @Published private(set) var browserGeneration = UUID()
     @Published private(set) var pip = WebPiPSessionState()
+    @Published private(set) var playing = false
     private(set) var webView: WKWebView!
     private let resolver: AetherDomainResolver
     private var pinnedOrigin: URL?
@@ -70,7 +71,6 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     private var automatic = true
     private var retainedForPiP: AetherBrowserSession?
     private var time = 0.0
-    private var playing = false
     private let diagnosticID = UUID().uuidString
 
     init(resolver: AetherDomainResolver = .shared) {
@@ -251,8 +251,15 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.webView === webView, pinnedOrigin != nil else { return }
         if message.name == "mediaState", let state = message.body as? [String: Any] {
+            // An idle iframe must not replace the playing content's session.
+            // While pending/active, only the matching identity may update time
+            // and playing as well as PiP flags.
+            if let current = pip.sessionID, state["pipSessionID"] as? String != current,
+               state["playing"] as? Bool != true, state["pipActive"] as? Bool != true { return }
             let old = pip
-            pip.snapshot(state)
+            var next = pip
+            guard next.snapshot(state) else { return }
+            pip = next
             if let value = state["time"] as? Double, value.isFinite { time = max(0, value) }
             playing = state["playing"] as? Bool == true
             if old.active != pip.active { trace(pip.active ? "didStart" : "didStop", trigger: "website") }
@@ -288,6 +295,7 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
       var observed=new WeakSet();
       function observe(){
         if(!window.document)return;
+        var previousVideo=activeVideo;
         var videos=Array.from(document.querySelectorAll('video')).filter(function(v){return !isAdvertisement(v);});
         videos.forEach(function(v){if(observed.has(v))return;observed.add(v);
           ['playing','pause','loadedmetadata','timeupdate','enterpictureinpicture','leavepictureinpicture','webkitpresentationmodechanged'].forEach(function(name){
@@ -297,6 +305,7 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
         if(!activeVideo||(!pipActive(activeVideo)&&!pipPending(activeVideo))){
           activeVideo=videos.find(function(v){return !v.paused&&v.readyState>=2;})||videos[0]||null;
         }
+        if(!activeVideo&&previousVideo){var previous=pipContext(previousVideo);send('mediaState',{pipSessionID:previous.sessionID,pipRequestID:previous.requestID,pipSupported:false,pipActive:false,pipPending:false,time:previousVideo.currentTime||0,playing:false});}
         state();
       }
       window.addEventListener('message',function(event){

@@ -89,6 +89,11 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        guard !episode.source.requiresWebsitePlayback else {
+            playback.loading = false
+            playback.error = AetherError.browserRequired.localizedDescription
+            return // Aether never installs this controller's Anime/embed scripts.
+        }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         loadingLabel.text = "Đang tải thông tin video…"
