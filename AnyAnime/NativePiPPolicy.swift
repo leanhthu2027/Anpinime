@@ -3,6 +3,11 @@ import Foundation
 /// State gates shared by the native bridge and controller. These describe app
 /// readiness; only AVKit can report whether a system PiP window starts.
 enum NativePiPPolicy {
+    static func shouldDeferTeardown(active: Bool, pending: Bool) -> Bool { active || pending }
+    static func acceptsLifecycleCallback(stopped: Bool, sourceMatchesController: Bool) -> Bool {
+        !stopped && sourceMatchesController
+    }
+
     static func automaticAllowed(preference: Bool, eligible: Bool, playing: Bool,
                                  frameReady: Bool, outputPrimed: Bool, sourceAttached: Bool) -> Bool {
         preference && eligible && playing && frameReady && outputPrimed && sourceAttached

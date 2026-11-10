@@ -256,7 +256,7 @@ final class AetherBrowserSession: NSObject, ObservableObject, WKNavigationDelega
     private func trace(_ event: String, trigger: String) {
         PiPDiagnostics.record(event, backend: "webkit", sessionID: pip.sessionID ?? diagnosticID,
             trigger: trigger, view: webView, time: time,
-            facts: ["possible": pip.supported, "pending": pip.pending, "active": pip.active])
+            facts: ["supported": pip.supported, "pending": pip.pending, "active": pip.active])
     }
 
     static let observerJavaScript = """

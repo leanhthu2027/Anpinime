@@ -20,7 +20,29 @@ struct NativePiPPolicyTests {
         verifyRestoreHandshake()
         verifyFrameGateDelivery()
         verifyConcurrentFrameGate()
+        verifyLateLifecycleCallbacks()
         print("\(checks) native PiP policy checks passed")
+    }
+
+    private static func verifyLateLifecycleCallbacks() {
+        for bits in 0..<4 {
+            require(NativePiPPolicy.shouldDeferTeardown(active: bits & 1 != 0, pending: bits & 2 != 0) == (bits != 0),
+                    "representable teardown waits for active/pending owner: \(bits)")
+        }
+        for stopped in [false, true] {
+            for matches in [false, true] {
+                require(NativePiPPolicy.acceptsLifecycleCallback(stopped: stopped, sourceMatchesController: matches) == (!stopped && matches),
+                        "lifecycle ownership rejects stale controller/teardown: stopped=\(stopped), matches=\(matches)")
+            }
+        }
+        // Reproduce the old path: a delayed didStart from a released controller
+        // used to write active=true into the shared playback of its replacement.
+        var active = false
+        if NativePiPPolicy.acceptsLifecycleCallback(stopped: true, sourceMatchesController: false) { active = true }
+        require(!active, "late didStart cannot resurrect a torn-down PiP session")
+        active = true
+        if NativePiPPolicy.acceptsLifecycleCallback(stopped: false, sourceMatchesController: false) { active = false }
+        require(active, "an old didStop cannot clear the current controller's active state")
     }
 
     private static func verifyReadiness() {

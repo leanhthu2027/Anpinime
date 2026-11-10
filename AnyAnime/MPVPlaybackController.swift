@@ -61,6 +61,8 @@ final class MPVPlaybackController: UIViewController {
     private var pipSmokePausedAt = 0.0
     #endif
     var onFailure: ((String) -> Void)?
+    var onPictureInPictureEnded: (() -> Void)?
+    private let piPDiagnosticSessionID = UUID().uuidString
 
     init(url: URL, headers: [String: String], playback: PlaybackState, preloading: Bool = false, resizesEmbeddedSurface: Bool = false, initialViewport: CGSize? = nil) {
         self.initialViewport = initialViewport
@@ -207,9 +209,11 @@ final class MPVPlaybackController: UIViewController {
     }
 
     private func updateAutomaticPiPReadiness() {
+        let previouslyPrepared = automaticPiPPrepared
         let eligible = automaticPiPEnabled && playingForPiP && viewIfLoaded?.window != nil
         pictureInPicture?.setAutomatic(eligible)
         automaticPiPPrepared = pictureInPicture?.automaticReady == true
+        if previouslyPrepared != automaticPiPPrepared { tracePiP("readinessChanged") }
     }
 
     @objc private func prepareForBackground() { prepareAutomaticPictureInPicture() }
@@ -286,6 +290,7 @@ final class MPVPlaybackController: UIViewController {
         }
         pip.onEvent = { [weak self] event in
             guard let self, self.piPGeneration == generation else { return }
+            self.tracePiP(event)
             if event == "firstFrameReady" || event == "outputPrimed" { self.updateAutomaticPiPReadiness() }
             if event == "restoreRejected", UIApplication.shared.applicationState == .active {
                 // The callback was already resolved false (timeout/teardown).
@@ -357,12 +362,14 @@ final class MPVPlaybackController: UIViewController {
 
     @objc private func background() {
         wasInBackground = true
+        tracePiP("backgroundBeforeReadiness")
         let automatic = automaticPiPEnabled
         if !automatic {
             automaticPiPPrepared = false
             pictureInPicture?.setAutomatic(false)
         }
         updateAutomaticPiPReadiness()
+        tracePiP("backgroundAfterReadiness")
         if automatic, automaticPiPPrepared, playingForPiP {
             #if DEBUG
             automaticPiPRequests += 1
@@ -413,6 +420,8 @@ final class MPVPlaybackController: UIViewController {
     private func finishedPictureInPicture(generation: UUID) {
         guard piPGeneration == generation, pictureInPicture != nil else { return }
         pictureInPicture = nil; automaticPiPPrepared = false; manuallyRequestedPiP = false
+        tracePiP("cleanupCompleted")
+        onPictureInPictureEnded?()
         if UIApplication.shared.applicationState == .background { background() }
         else if resizesEmbeddedSurface, piPViewport.width > 1, piPViewport.height > 1,
                 (piPViewport.width > piPViewport.height) != (view.bounds.width > view.bounds.height) {
@@ -420,6 +429,19 @@ final class MPVPlaybackController: UIViewController {
             // as a normal portrait/landscape move, after PiP relinquishes ownership.
             onViewportChange?(view.bounds.size)
         }
+    }
+
+    private func tracePiP(_ event: String) {
+        #if DEBUG
+        let facts = pictureInPicture?.readinessFacts ?? [:]
+        PiPDiagnostics.record(event, backend: "mpv", sessionID: piPDiagnosticSessionID,
+            trigger: manuallyRequestedPiP ? "manual" : "automatic", view: viewIfLoaded, time: playback.currentTime,
+            facts: ["frameReady": facts["frameReady"] as? Bool == true,
+                    "outputPrimed": facts["outputPrimed"] as? Bool == true,
+                    "possible": pictureInPicture?.possible == true,
+                    "prepared": automaticPiPPrepared,
+                    "pending": playback.pictureInPicturePending, "active": playback.pictureInPictureActive])
+        #endif
     }
 
     /// mpv's own decoded frame arms sample-buffer PiP before iOS suspends the app.

@@ -106,7 +106,19 @@ struct PlayerView: View {
                     loadingBackdrop(size: geometry.size)
                 }
 
-                if !playback.verification {
+                if !playback.verification && playback.engine == "AVPlayer" {
+                    // Let AVKit receive gestures for its own PiP, tracks, seek
+                    // and fullscreen controls; the app still supplies dismissal.
+                    VStack { HStack { controlButton("xmark", "Đóng trình phát") { dismiss() }; Spacer() }; Spacer() }.padding()
+                    if let error = playback.error {
+                        VStack(spacing: 12) {
+                            Text(error).multilineTextAlignment(.center)
+                            Button("Thử phát lại") { retry() }.buttonStyle(.borderedProminent)
+                        }.padding(24).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                    } else if let error = playback.pictureInPictureError {
+                        VStack { Spacer(); Text(error).font(.footnote).padding(12) }.allowsHitTesting(false)
+                    }
+                } else if !playback.verification {
                     Color.clear.contentShape(Rectangle())
                         .onTapGesture {
                             guard !locked else { return }

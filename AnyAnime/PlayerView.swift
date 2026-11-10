@@ -18,7 +18,7 @@ struct PlayerControllerView: UIViewControllerRepresentable {
 }
 
 @MainActor
-final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, AVPlayerViewControllerDelegate {
     private static let episodeSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = .shared
@@ -34,6 +34,12 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     private let service: AnimeService
     private let playback: PlaybackState
     private var active = true
+    private var shutdownRequested = false
+    private var retainedForPiP: AnimePlayerViewController?
+    private let piPDiagnosticSessionID = UUID().uuidString
+    private var avRestoreHandshake = NativePiPRestoreHandshake()
+    private var avRestoreCompletion: ((Bool) -> Void)?
+    private var avRestoreTimeout: Task<Void, Never>?
     private var requestTask: Task<Void, Never>?
     private var nativeTimer: Timer?
     private var endedObserver: NSObjectProtocol?
@@ -124,7 +130,16 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
 
     func shutdown() {
         guard active else { return }
+        if NativePiPPolicy.shouldDeferTeardown(active: playback.pictureInPictureActive, pending: playback.pictureInPicturePending) {
+            // A representable can disappear during system presentation. Its
+            // decoder, WKWebView and delegates must live until that owner stops.
+            shutdownRequested = true; retainedForPiP = self
+            tracePiP("teardownDeferred")
+            return
+        }
         active = false
+        retainedForPiP = nil
+        if let requestID = avRestoreHandshake.pendingID { completeAVRestore(requestID, success: false) }
         resetWebPictureInPicture()
         NotificationCenter.default.removeObserver(self)
         mpvController?.shutdown(); mpvController = nil
@@ -137,6 +152,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         verificationTimer?.invalidate()
         if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         playerController?.player?.pause()
+        playerController?.delegate = nil
         playerController?.player?.replaceCurrentItem(with: nil)
         for webView in [directWebView, fallbackWebView] {
             webView?.evaluateJavaScript("window.postMessage({type:'AnPinimeCommand',name:'pipStop'},'*');document.querySelectorAll('video').forEach(v=>v.pause())")
@@ -146,6 +162,18 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 webView?.configuration.userContentController.removeScriptMessageHandler(forName: $0)
             }
         }
+    }
+
+    private func finishDeferredShutdown() {
+        guard shutdownRequested, !playback.pictureInPicturePending, !playback.pictureInPictureActive else { return }
+        shutdown()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated); acknowledgeAVRestoreIfReady()
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews(); acknowledgeAVRestoreIfReady()
     }
 
     private func configureWebPictureInPicture() {
@@ -173,6 +201,8 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         playback.pictureInPicturePending = false
         if stopped { playback.pictureInPictureActive = false }
         playback.pictureInPictureError = error
+        tracePiP(stopped ? "didStop" : "requestFinished")
+        finishDeferredShutdown()
     }
 
     private func webPictureInPictureError(_ reason: String) -> String? {
@@ -199,6 +229,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         // state or a temporary disappearance must not pause a starting request.
         playback.pictureInPicturePending = true
         playback.pictureInPictureError = nil
+        tracePiP("startRequested")
         webPiPTimeout?.invalidate()
         webPiPTimeout = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             Task { @MainActor in
@@ -232,6 +263,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             webPiPTimeout?.invalidate(); webPiPTimeout = nil
             playback.pictureInPicturePending = false
             playback.pictureInPictureError = nil
+            tracePiP("didStart")
         } else if !playback.pictureInPictureActive,
                   (state["pipPending"] as? Bool) != true, requestID == webPiPRequestID {
             finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
@@ -253,6 +285,11 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     }
 
     @objc private func restoreWebForeground() {
+        if let controller = playerController {
+            controller.canStartPictureInPictureAutomaticallyFromInline = UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true
+            acknowledgeAVRestoreIfReady()
+            return
+        }
         guard active, mpvController == nil, playerController == nil else { return }
         if let source = deferredDirectSource, directWebView != nil {
             deferredDirectSource = nil
@@ -543,6 +580,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         if useMPV {
             if !cookies.isEmpty { headers["Cookie"] = HTTPCookie.requestHeaderFields(with: cookies)["Cookie"] }
             let controller = MPVPlaybackController(url: url, headers: headers, playback: playback)
+            controller.onPictureInPictureEnded = { [weak self, weak controller] in
+                guard let self, let controller, self.mpvController === controller else { return }
+                self.finishDeferredShutdown()
+            }
             let canRestoreWebsite = episode.source == .anime || fallbackWebView != nil || providerWebURL != nil
             if canRestoreWebsite {
                 controller.onFailure = { [weak self, weak controller] _ in
@@ -595,7 +636,11 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         mediaTracksLoaded = false
         let controller = AVPlayerViewController()
         controller.player = player
-        controller.showsPlaybackControls = false
+        // AVPlayerViewController exposes manual PiP through its system controls;
+        // there is no public startPiP() method on this controller. Hiding those
+        // controls removed the only manual entry point for this backend.
+        controller.showsPlaybackControls = true
+        controller.delegate = self
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true
         controller.videoGravity = playback.fill ? .resizeAspectFill : .resizeAspect
@@ -635,6 +680,82 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         nativeTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateNativeState() }
         }
+    }
+
+    func playerViewControllerWillStartPictureInPicture(_ controller: AVPlayerViewController) {
+        guard active, controller === playerController else { return }
+        playback.pictureInPicturePending = true; playback.pictureInPictureError = nil
+        tracePiP("willStart")
+    }
+    func playerViewControllerDidStartPictureInPicture(_ controller: AVPlayerViewController) {
+        guard active, controller === playerController else { return }
+        playback.pictureInPictureActive = true; playback.pictureInPicturePending = false
+        tracePiP("didStart")
+    }
+    func playerViewController(_ controller: AVPlayerViewController, failedToStartPictureInPictureWithError error: Error) {
+        guard active, controller === playerController else { return }
+        playback.pictureInPictureActive = false; playback.pictureInPicturePending = false
+        playback.pictureInPictureError = "iOS chưa mở được PiP cho video này."
+        tracePiP("failedToStart(code=\((error as NSError).code))"); finishDeferredShutdown()
+    }
+    func playerViewControllerDidStopPictureInPicture(_ controller: AVPlayerViewController) {
+        guard active, controller === playerController else { return }
+        playback.pictureInPictureActive = false; playback.pictureInPicturePending = false
+        tracePiP("didStop"); finishDeferredShutdown()
+    }
+    func playerViewController(_ controller: AVPlayerViewController,
+                              restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        guard active, controller === playerController else { completionHandler(false); return }
+        let oldCompletion = avRestoreCompletion
+        let requestID = avRestoreHandshake.begin()
+        avRestoreCompletion = completionHandler
+        avRestoreTimeout?.cancel()
+        oldCompletion?(false)
+        guard avRestoreHandshake.pendingID == requestID else { return }
+        tracePiP("restoreRequested")
+        avRestoreTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.completeAVRestore(requestID, success: false)
+        }
+        viewIfLoaded?.setNeedsLayout()
+        viewIfLoaded?.layoutIfNeeded()
+        acknowledgeAVRestoreIfReady()
+    }
+    private func acknowledgeAVRestoreIfReady() {
+        guard let requestID = avRestoreHandshake.pendingID else { return }
+        let source = viewIfLoaded, window = source?.window
+        let scene = window?.windowScene?.activationState
+        let bounds = source?.bounds ?? .zero
+        let ready = NativePiPPolicy.canAcknowledgeRestore(ownerAlive: active && !shutdownRequested && !isBeingDismissed && !isMovingFromParent,
+            applicationForeground: UIApplication.shared.applicationState != .background,
+            sceneForeground: scene == .foregroundActive || scene == .foregroundInactive,
+            sourceAttached: window != nil && window?.isHidden == false && source?.isHidden == false,
+            layoutReady: bounds.width.isFinite && bounds.height.isFinite && bounds.width > 1 && bounds.height > 1)
+        if ready { completeAVRestore(requestID, success: true) }
+    }
+    private func completeAVRestore(_ requestID: UInt64, success: Bool) {
+        guard avRestoreHandshake.consume(requestID) else { return }
+        let completion = avRestoreCompletion; avRestoreCompletion = nil
+        avRestoreTimeout?.cancel(); avRestoreTimeout = nil
+        completion?(success)
+        tracePiP(success ? "restoreCompleted" : "restoreRejected")
+    }
+    private func tracePiP(_ event: String) {
+        let backend = mpvController != nil ? "mpv" : playerController != nil ? "avplayer" : "webkit"
+        var facts = ["pending": playback.pictureInPicturePending, "active": playback.pictureInPictureActive]
+        if let playerController {
+            facts["supported"] = AVPictureInPictureController.isPictureInPictureSupported()
+            facts["frameReady"] = playerController.isReadyForDisplay
+        } else if mpvController == nil {
+            facts["supported"] = playback.pictureInPictureSupported
+            facts["frameReady"] = !playback.loading && playback.videoWidth > 0
+        }
+        // WebKit and AVPlayerViewController do not expose AVKit's native
+        // isPictureInPicturePossible flag. Do not substitute "supported" for it.
+        PiPDiagnostics.record(event, backend: backend, sessionID: webPiPSessionID ?? piPDiagnosticSessionID,
+            trigger: "system-or-user", view: viewIfLoaded, time: playback.currentTime,
+            facts: facts)
     }
 
     private func restoreWebsiteAfterNativeFailure(reason: String) {
@@ -891,6 +1012,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 playback.pictureInPictureActive = true
                 playback.pictureInPicturePending = false
                 playback.pictureInPictureError = nil
+                tracePiP("didStart")
             } else if state["status"] == "stopped" {
                 finishWebPictureInPictureRequest(requestID, sessionID: sessionID, stopped: true)
             } else if state["status"] == "error" {

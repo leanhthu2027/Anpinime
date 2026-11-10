@@ -12,7 +12,7 @@ enum PiPDiagnostics {
             "sceneState": window?.windowScene?.activationState.rawValue ?? -1,
             "sourceAttached": window != nil, "time": time.isFinite ? time : 0,
             "uptime": ProcessInfo.processInfo.systemUptime]
-        for (key, flag) in facts where ["frameReady", "outputPrimed", "possible", "pending", "active", "prepared"].contains(key) { value[key] = flag }
+        for (key, flag) in facts where ["frameReady", "outputPrimed", "possible", "supported", "pending", "active", "prepared"].contains(key) { value[key] = flag }
         if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
            let line = String(data: data, encoding: .utf8) { print("[PiP] " + line) }
         #endif

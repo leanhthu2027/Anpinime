@@ -288,6 +288,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         }
         wantsStart = true
         playback.pictureInPicturePending = true
+        onEvent?("startRequested")
         startIfPossible()
         scheduleStartTimeout()
     }
@@ -424,6 +425,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         stop(restore: true) { [weak self] in self?.finished() }
     }
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard acceptsLifecycleCallback(pictureInPictureController) else { return }
         starting = true
         if stopping { pictureInPictureController.stopPictureInPicture(); return }
         playback.pictureInPicturePending = true
@@ -432,6 +434,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         onEvent?("willStart")
     }
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard acceptsLifecycleCallback(pictureInPictureController) else { return }
         starting = false
         startTimeout?.cancel(); startTimeout = nil
         if stopping { pictureInPictureController.stopPictureInPicture(); return }
@@ -439,11 +442,14 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         onEvent?("didStart")
     }
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        guard acceptsLifecycleCallback(pictureInPictureController) else { return }
+        onEvent?("failedToStart(code=\((error as NSError).code))")
         starting = false
         if stopping { finishStop() }
         else { fail("Chưa mở được PiP: " + error.localizedDescription) }
     }
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard acceptsLifecycleCallback(pictureInPictureController) else { return }
         starting = false
         onEvent?("didStop")
         if stopping { finishStop() }
@@ -516,6 +522,10 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private func acceptsControls(sourceMatchesController: Bool, sourceIsActive: Bool) -> Bool {
         NativePiPPolicy.acceptsControls(stopped: stopped, stopping: stopping,
             sourceMatchesController: sourceMatchesController, sourceIsActive: sourceIsActive)
+    }
+
+    private func acceptsLifecycleCallback(_ source: AVPictureInPictureController) -> Bool {
+        NativePiPPolicy.acceptsLifecycleCallback(stopped: stopped, sourceMatchesController: source === controller)
     }
 
     #if DEBUG
