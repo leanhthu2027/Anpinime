@@ -9,8 +9,8 @@ final class MovieSearchUITests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         let selected = app.staticTexts["search-hit.selected"]
-        let firstID = "phim4k:https://preview.invalid/movie/search-1"
-        let secondID = "phim4k:https://preview.invalid/movie/search-2"
+        let firstID = "kkphim:https://preview.invalid/movie/search-1"
+        let secondID = "kkphim:https://preview.invalid/movie/search-2"
         let first = app.buttons["search-result-" + firstID]
         let second = app.buttons["search-result-" + secondID]
         XCTAssertTrue(first.waitForExistence(timeout: 10))

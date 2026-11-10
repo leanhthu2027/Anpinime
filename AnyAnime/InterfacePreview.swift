@@ -50,7 +50,7 @@ private struct MovieSearchHitPreview: View {
     private let items = (1...3).map { index in
         Anime(title: "Kết quả tìm kiếm \(index)", subtitle: "Bản độc lập \(index)",
               url: URL(string: "https://preview.invalid/movie/search-\(index)")!, imageURL: nil,
-              episodeText: "Phim lẻ", quality: "1080p", score: "8.0", source: .phim4k)
+              episodeText: "Phim lẻ", quality: "1080p", score: "8.0", source: .kkphim)
     }
     var body: some View {
         NavigationView {

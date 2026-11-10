@@ -1,20 +1,23 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 @MainActor
-final class MovieProvider {
+final class MovieProvider: MovieSourceProviding {
     let source: ContentSource
     private(set) var baseURL: URL
     private var publicCategories: [AnimeCategory] = []
-    var categories: [AnimeCategory] { source == .phim4k ? appProvider.categories : publicCategories }
-    var notice: String { source == .phim4k ? appProvider.notice : "" }
-    private let appProvider: Phim4KProvider
-    private var format: Phim4KFormat
+    var categories: [AnimeCategory] { publicCategories }
+    var notice: String { "" }
+    private var format: MovieAPIFormat
     private let session: URLSession
     private var ticket: String?
     private var ticketExpiry = Date.distantPast
     private var cachedJSON: [URL: (Date, MovieCatalog.Object)] = [:]
 
-    init(source: ContentSource, session suppliedSession: URLSession? = nil, source2Configuration: Phim4KProvider.Configuration? = nil) {
+    init(source: ContentSource, session suppliedSession: URLSession? = nil) {
+        precondition(source == .film4k || source == .kkphim)
         self.source = source
         format = source == .film4k ? .free2 : .free1
         baseURL = source == .kkphim ? URL(string: "https://phimapi.com")! : format.defaultURL
@@ -28,12 +31,10 @@ final class MovieProvider {
         config.httpCookieStorage = .shared
         config.httpShouldSetCookies = true
         session = suppliedSession ?? URLSession(configuration: config)
-        appProvider = Phim4KProvider(session: session, configuration: source2Configuration)
     }
 
     func invalidate() {
         cachedJSON.removeAll()
-        appProvider.invalidate()
     }
 
     func home(onInitial: ([AnimeSection]) -> Void = { _ in }) async throws -> [AnimeSection] {
@@ -43,14 +44,6 @@ final class MovieProvider {
             return MovieCatalog.filmSections(try await request(MovieCatalog.route("api/home", base: baseURL)), base: baseURL)
         }
         #endif
-        if source == .phim4k {
-            let sections = try await appProvider.home { initial in
-                self.baseURL = self.appProvider.baseURL
-                onInitial(initial)
-            }
-            baseURL = appProvider.baseURL
-            return sections
-        }
         // Return the first useful page immediately; other categories load on demand.
         let items = try await list(path: "")
         guard !items.isEmpty else { throw MovieSourceError.invalidData }
@@ -80,7 +73,6 @@ final class MovieProvider {
     }
 
     func list(path: String, page: Int = 1) async throws -> [Anime] {
-        if source == .phim4k { return try await appProvider.list(path: path, page: page) }
         if source == .kkphim, MovieBrowseCatalog.kkWebsiteLists.contains(path) {
             let url = MovieCatalog.route(String(path.dropFirst(5)), base: URL(string: "https://kkphim.com")!, query: [.init(name: "page", value: String(page))])
             return MovieBrowseCatalog.kkWebsiteItems(try await websiteHTML(url))
@@ -92,14 +84,12 @@ final class MovieProvider {
     }
 
     func search(_ query: String) async throws -> [Anime] {
-        if source == .phim4k { return try await appProvider.search(query) }
         let json = try await catalogRequest(MovieCatalog.route(format.searchPath, base: baseURL, query: [.init(name: "keyword", value: query)]))
         return MovieCatalog.legacyItems(json, base: baseURL, format: format, source: source)
     }
 
     func detail(_ anime: Anime) async throws -> AnimeDetail {
         guard anime.source == source else { throw MovieSourceError.invalidData }
-        if source == .phim4k { return try await appProvider.detail(anime) }
         #if DEBUG
         if source == .film4k, PlaybackSmokeTest.providerFixture {
             return try MovieCatalog.filmDetail(try await request(MovieCatalog.route("api/title/" + anime.url.lastPathComponent, base: baseURL)), anime: anime, base: baseURL)
@@ -166,25 +156,16 @@ final class MovieProvider {
             let native = Self.isNative(selected)
             return ResolvedPlayback(url: native ? url : episode.url, headers: headers, webURL: episode.url, isWeb: !native)
         case .catalogEpisode(let detailURL, let serverName, let episodeKey):
-            if source == .phim4k {
-                return try await appProvider.resolveFree(detailURL: detailURL, serverName: serverName, episodeKey: episodeKey)
-            }
             // Refresh the exact provider, server and episode, even if the API reorders rows.
             let activeDetailURL = detailURL
-            let json = try await (source == .phim4k ? appProvider.episodeJSON(detailURL) : request(detailURL))
+            let json = try await request(detailURL)
             guard let row = MovieCatalog.episodeRow(json, serverName: serverName, key: episodeKey),
                   let stream = MovieCatalog.legacyStream(row, base: activeDetailURL) else { throw MovieSourceError.noVideo }
             let web = MovieCatalog.url(row["link_embed"] ?? row["embed"], base: activeDetailURL)
             let originHost = activeDetailURL.scheme.flatMap { s in activeDetailURL.host.map { "\(s)://\($0)" } } ?? baseURL.absoluteString
             return ResolvedPlayback(url: stream.url, headers: ["Referer": originHost + "/", "Origin": originHost, "User-Agent": AnimeService.userAgent],
                                     webURL: stream.web ? web : nil, isWeb: stream.web)
-        case .phim4kCore(let detailURL, let seasonID, let episodeID):
-            guard source == .phim4k else { throw MovieSourceError.invalidData }
-            return try await appProvider.resolveCore(detailURL: detailURL, seasonID: seasonID, episodeID: episodeID)
         case .directStream(let url, let webURL, let isWeb, let referer):
-            if source == .phim4k, !isWeb {
-                return ResolvedPlayback(url: url, headers: Phim4KProvider.mediaHeaders, webURL: webURL, isWeb: false)
-            }
             let refURL = referer ?? baseURL
             let originHost = refURL.scheme.flatMap { s in refURL.host.map { "\(s)://\($0)" } } ?? baseURL.absoluteString
             return ResolvedPlayback(url: url, headers: ["Referer": originHost + "/", "Origin": originHost, "User-Agent": AnimeService.userAgent],

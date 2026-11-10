@@ -1,0 +1,65 @@
+const {readFileSync} = require('node:fs');
+const assert = require('node:assert/strict');
+const {JSDOM, VirtualConsole} = require('jsdom');
+const core = readFileSync('AnyAnime/WebPictureInPictureScript.swift','utf8').match(/static let core = """([\s\S]*?)"""/)[1];
+const script = readFileSync('AnyAnime/Aether/AetherBrowserView.swift','utf8').match(/static let observerJavaScript = """([\s\S]*?)"""/)[1]
+  .replace('\\(WebPictureInPictureScript.core)', core).replace(/\\\\/g,'\\');
+function fixture() {
+  const virtualConsole=new VirtualConsole().on('jsdomError',error=>{throw error;});
+  const dom = new JSDOM('<header>Catalog/Search/Seasons</header><main><video controls playsinline style="object-fit:contain" src="blob:https://aether.st/sealed"></video><button id="translate">Translate to Vietnamese</button><aside>Subtitles / OpenSubtitles</aside></main>',{url:'https://aether.st/',runScripts:'outside-only',virtualConsole});
+  const w=dom.window, v=w.document.querySelector('video'), messages=[], timers=[];
+  w.webkit={messageHandlers:new Proxy({}, {get:(_,name)=>({postMessage:value=>messages.push({name,value})})})};
+  w.setInterval=fn=>{timers.push(fn);return timers.length;};w.setTimeout=fn=>{timers.push(fn);return timers.length;};
+  let paused=false, seeks=0, pauses=0;
+  Object.defineProperties(v,{paused:{get:()=>paused},readyState:{get:()=>4},currentTime:{get:()=>12,set:()=>{seeks++;}}});
+  v.pause=()=>{paused=true;pauses++;}; v.play=()=>{throw Error('The observer must not autoplay');};
+  v.webkitSupportsPresentationMode=()=>true; v.webkitPresentationMode='inline';
+  v.webkitSetPresentationMode=mode=>{v.webkitPresentationMode=mode;v.dispatchEvent(new w.Event('webkitpresentationmodechanged'));};
+  let translated=false;w.document.querySelector('#translate').onclick=()=>{translated=true;};
+  const markup=w.document.body.innerHTML;
+  w.eval(script);
+  function command(fields){w.dispatchEvent(new w.MessageEvent('message',{data:{type:'AnPinimeCommand',...fields}}));}
+  return {dom,w,v,messages,timers,command,markup,get translated(){return translated;},get seeks(){return seeks;},get pauses(){return pauses;}};
+}
+const f=fixture();
+assert.equal(f.w.document.body.innerHTML,f.markup,'catalog, controls, captions and translation DOM is untouched');
+f.w.document.querySelector('#translate').click();assert(f.translated,'the original website translation action is preserved');
+assert.equal(f.seeks,0);assert.equal(f.pauses,0);
+assert(!f.messages.some(m=>m.name==='videoFound'||m.name==='iframeFound'),'no URL extraction or native handoff');
+const beforeInstall=f.messages.length;f.w.eval(script);assert.equal(f.messages.length,beforeInstall,'reinstalling the observer cannot duplicate its owner');
+const state=f.messages.find(m=>m.name==='mediaState').value;
+f.command({name:'pip',sessionID:'another-frame',requestID:'wrong'});
+assert.equal(f.v.webkitPresentationMode,'inline');
+f.command({name:'pip',sessionID:state.pipSessionID,requestID:'manual'});
+assert.equal(f.v.webkitPresentationMode,'picture-in-picture');
+assert(f.messages.some(m=>m.name==='pipState'&&m.value.status==='active'&&m.value.requestID==='manual'));
+f.command({name:'pause'});assert.equal(f.pauses,0,'temporary host disappearance must not pause PiP');
+assert.equal(f.w.document.body.innerHTML,f.markup,'PiP does not rewrite player or subtitle DOM');
+f.command({name:'pipStop'});assert.equal(f.v.webkitPresentationMode,'inline');
+assert(f.messages.some(m=>m.name==='pipState'&&m.value.status==='stopped'));
+f.command({name:'pause'});assert.equal(f.pauses,1,'ending the inline session pauses its only decoder');
+f.command({name:'endSession'});assert.equal(f.pauses,2,'explicit source/library changes silence the previous website');
+f.dom.window.close();
+const g=fixture();
+g.command({name:'automaticPiP',value:1});
+g.w.dispatchEvent(new g.w.Event('pagehide'));g.w.document.dispatchEvent(new g.w.Event('visibilitychange'));
+assert.equal(g.v.webkitPresentationMode,'inline','background JS never promises automatic iPhone PiP');
+g.v.disablePictureInPicture=true;
+g.v.dispatchEvent(new g.w.Event('timeupdate'));
+const latest=g.messages.filter(m=>m.name==='mediaState').at(-1).value;
+assert.equal(latest.pipSupported,false,'the website may prohibit PiP');
+g.command({name:'pip',sessionID:latest.pipSessionID,requestID:'disabled'});
+assert.equal(g.v.webkitPresentationMode,'inline');
+g.dom.window.close();
+const h=fixture();
+delete h.v.webkitSetPresentationMode;
+h.v.requestPictureInPicture=()=>Promise.reject(Error('gesture required'));
+Object.defineProperty(h.w.document,'pictureInPictureEnabled',{value:true});
+const sid=h.messages.find(m=>m.name==='mediaState').value.pipSessionID;
+h.command({name:'pip',sessionID:sid,requestID:'reject'});
+Promise.resolve().then(()=>{
+  assert(h.messages.some(m=>m.name==='pipState'&&m.value.status==='error'&&m.value.error==='rejected'));
+  assert(h.messages.some(m=>m.name==='mediaState'&&!m.value.pipPending));
+  h.dom.window.close();
+  console.log('PASS: Aether website controls/translation preserved, no MPV handoff, shared PiP identity, active ownership, rejection and honest automatic support');
+}).catch(e=>{console.error(e);process.exitCode=1;});

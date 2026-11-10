@@ -19,13 +19,13 @@ protocol ObservableObject: AnyObject {}
         throw AnimeServiceError.verificationRequired(url)
     }
 }
-@MainActor final class MovieProvider {
+@MainActor final class MovieProvider: MovieSourceProviding {
     let baseURL = URL(string: "https://unused.example")!
     let categories: [AnimeCategory] = []
     let notice = ""
     init(source: ContentSource) {}
     func invalidate() {}
-    func home(_ partial: @escaping ([AnimeSection]) -> Void) async throws -> [AnimeSection] { [] }
+    func home(onInitial partial: ([AnimeSection]) -> Void) async throws -> [AnimeSection] { [] }
     func list(path: String, page: Int) async throws -> [Anime] { [] }
     func search(_ value: String) async throws -> [Anime] { [] }
     func detail(_ value: Anime) async throws -> AnimeDetail { throw AnimeServiceError.emptyData }

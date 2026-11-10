@@ -7,10 +7,6 @@ on:
         description: 'Capture simulator UI previews'
         type: boolean
         default: false
-      gateway_frame_only:
-        description: 'Check live gateway playback past 15 seconds using captured Core metadata'
-        type: boolean
-        default: false
       ai_drama_only:
         description: 'Verify the independent Phim AI provider and vertical episode UI'
         type: boolean
@@ -22,48 +18,15 @@ on:
 
 jobs:
   build-ios:
-    if: ${{ !inputs.gateway_frame_only && !inputs.ai_drama_only && !inputs.shorts_only }}
+    if: ${{ !inputs.ai_drama_only && !inputs.shorts_only }}
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify parsing and playback regressions
+      - name: Verify offline provider, Aether, player and PiP regressions
         run: |
-          swiftc AnyAnime/Models.swift AnyAnime/AnimeSiteConfiguration.swift AnyAnime/AnimeScheduleStore.swift AnyAnime/HTMLDocument.swift AnyAnime/HTMLParser.swift AnyAnime/MovieBrowseCatalog.swift AnyAnime/MovieCatalog.swift AnyAnime/Phim4KCatalog.swift AnyAnime/Phim4KVIPResolver.swift AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift AnyAnime/Phim4KRelayNaming.swift AnyAnime/SearchHistory.swift AnyAnime/FilmMediaTransform.swift Tests/main.swift -o "$RUNNER_TEMP/anpinime-parser-tests"
-          "$RUNNER_TEMP/anpinime-parser-tests"
-          swiftc AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift AnyAnime/Phim4KVIPResolver.swift Tests/Phim4KResolverTests.swift -o "$RUNNER_TEMP/anpinime-resolver-tests"
-          "$RUNNER_TEMP/anpinime-resolver-tests"
-          swiftc AnyAnime/Models.swift AnyAnime/AnimeSiteConfiguration.swift AnyAnime/AnimeScheduleStore.swift AnyAnime/HTMLDocument.swift AnyAnime/HTMLParser.swift AnyAnime/MovieBrowseCatalog.swift AnyAnime/MovieCatalog.swift AnyAnime/Phim4KCatalog.swift AnyAnime/Phim4KVIPResolver.swift AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift AnyAnime/MovieSourceDirectory.swift AnyAnime/MovieProvider.swift AnyAnime/Phim4KProvider.swift Tests/ProviderTests.swift -o "$RUNNER_TEMP/anpinime-provider-tests"
-          "$RUNNER_TEMP/anpinime-provider-tests"
           npm install --prefix "$RUNNER_TEMP/anpinime-js-tests" jsdom@26.1.0 --no-audit --no-fund
-          NODE_PATH="$RUNNER_TEMP/anpinime-js-tests/node_modules" node Tests/player.test.cjs
-          swiftc AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift Tests/RangeProbeTests.swift -o "$RUNNER_TEMP/anpinime-range-tests"
-          ANPINIME_RANGE_READY_FILE="$RUNNER_TEMP/anpinime-range-ready.json"
-          python3 - "$ANPINIME_RANGE_READY_FILE" <<'PY'
-          from pathlib import Path
-          import sys
-          Path(sys.argv[1]).unlink(missing_ok=True)
-          PY
-          ANPINIME_RANGE_PORT=0 ANPINIME_RANGE_READY_FILE="$ANPINIME_RANGE_READY_FILE" python3 -u Tests/range_probe_server.py > "$RUNNER_TEMP/anpinime-range-server.log" 2>&1 &
-          ANPINIME_RANGE_SERVER=$!
-          range_fixture_cleanup() {
-            ANPINIME_RANGE_EXIT=$?
-            kill "$ANPINIME_RANGE_SERVER" 2>/dev/null || true
-            wait "$ANPINIME_RANGE_SERVER" 2>/dev/null || true
-            mkdir -p previews
-            cp "$RUNNER_TEMP/anpinime-range-server.log" previews/anpinime-range-server.log || true
-            if [ -f "$ANPINIME_RANGE_READY_FILE" ]; then cp "$ANPINIME_RANGE_READY_FILE" previews/anpinime-range-ready.json || true; fi
-            if [ "$ANPINIME_RANGE_EXIT" != 0 ]; then cat "$RUNNER_TEMP/anpinime-range-server.log" || true; fi
-            return "$ANPINIME_RANGE_EXIT"
-          }
-          trap range_fixture_cleanup EXIT
-          if ! ANPINIME_RANGE_PORT=$(python3 Tests/range_fixture_ready.py --pid "$ANPINIME_RANGE_SERVER" --ready-file "$ANPINIME_RANGE_READY_FILE"); then exit 1; fi
-          export ANPINIME_RANGE_PORT
-          "$RUNNER_TEMP/anpinime-range-tests"
-          python3 Tests/range_virtual_test.py
-
-      - name: Verify anime Home first content, cache and domain recovery
-        run: bash Tests/anime-home-smoke.sh
+          NODE_PATH="$RUNNER_TEMP/anpinime-js-tests/node_modules" bash Tests/local-regressions.sh
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -88,8 +51,8 @@ jobs:
           brew install ffmpeg
           bash Tests/mpv-smoke.sh
 
-      - name: Verify source-2 HLS through its real relay and mpv
-        run: bash Tests/phim4k-live-smoke.sh hls
+      - name: Verify shared HLS through its real relay and mpv
+        run: bash Tests/relay-hls-smoke.sh
 
       - name: Verify anime dynamic episode list and selected-episode playback
         run: bash Tests/anime-smoke.sh fixture
@@ -100,40 +63,6 @@ jobs:
       - name: Check current AnimeVietsub episode list and playback
         continue-on-error: true
         run: bash Tests/anime-smoke.sh live
-
-      - name: Check public Phim4K Free1 playback
-        continue-on-error: true
-        run: bash Tests/phim4k-live-smoke.sh
-
-      - name: Record bounded Free1 and Core transport observations
-        if: always()
-        run: python3 Tests/source2_live_probe.py
-
-      - name: Check original Core Wakanda server 31937 playback
-        continue-on-error: true
-        run: bash Tests/phim4k-live-smoke.sh vip
-
-      - name: Measure user Spider-Man sample startup on the original low-size server
-        continue-on-error: true
-        env:
-          ANPINIME_CORE_ID: '17997'
-          ANPINIME_SERVER_ID: '34793'
-          ANPINIME_RESULT_SUFFIX: spiderman-34793
-          ANPINIME_MIN_PLAYBACK_SECONDS: '20'
-        run: bash Tests/phim4k-live-smoke.sh vip
-
-      - name: Measure user Spider-Man sample startup on its original 4K server
-        continue-on-error: true
-        env:
-          ANPINIME_CORE_ID: '17997'
-          ANPINIME_SERVER_ID: '34794'
-          ANPINIME_RESULT_SUFFIX: spiderman-34794
-          ANPINIME_MIN_PLAYBACK_SECONDS: '20'
-        run: bash Tests/phim4k-live-smoke.sh vip
-
-      - name: Check live source-2 gateway and media using captured Core metadata
-        continue-on-error: true
-        run: bash Tests/phim4k-live-smoke.sh gateway
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -155,7 +84,7 @@ jobs:
           retention-days: 14
 
   preview:
-    if: github.event_name == 'workflow_dispatch' && inputs.preview && !inputs.gateway_frame_only && !inputs.ai_drama_only && !inputs.shorts_only
+    if: github.event_name == 'workflow_dispatch' && inputs.preview && !inputs.ai_drama_only && !inputs.shorts_only
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -176,12 +105,11 @@ jobs:
           ANPINIME_SERVER_PID=$!
           trap 'kill "$ANPINIME_SERVER_PID"' EXIT
           ANPINIME_APP_DATA=$(xcrun simctl get_app_container "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime data)
-          for backend in native web film4k phim4k; do
+          for backend in native web film4k; do
             case "$backend" in
               native) flag=--playback-smoke ;;
               web) flag=--web-playback-smoke ;;
               film4k) flag=--movie-provider-smoke ;;
-              phim4k) flag=--phim4k-provider-smoke ;;
             esac
             xcrun simctl launch --terminate-running-process "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime "$flag"
             for attempt in $(seq 1 45); do
@@ -211,19 +139,6 @@ jobs:
           xcrun simctl io "$ANPINIME_SIMULATOR_ID" screenshot previews/film4k-live.png
           test -f "$ANPINIME_APP_DATA/Documents/playback-film4k-live.json"
           cp "$ANPINIME_APP_DATA/Documents/playback-film4k-live.json" previews/
-      - name: Check live source 2 playback
-        continue-on-error: true
-        run: |
-          ANPINIME_SIMULATOR_ID=$(xcrun simctl list devices booted -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat()[0].udid))')
-          ANPINIME_APP_DATA=$(xcrun simctl get_app_container "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime data)
-          xcrun simctl launch --terminate-running-process "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime --phim4k-live-smoke
-          for attempt in $(seq 1 90); do
-            if [ -f "$ANPINIME_APP_DATA/Documents/playback-phim4k-live.json" ]; then break; fi
-            sleep 1
-          done
-          xcrun simctl io "$ANPINIME_SIMULATOR_ID" screenshot previews/phim4k-live.png
-          test -f "$ANPINIME_APP_DATA/Documents/playback-phim4k-live.json"
-          cp "$ANPINIME_APP_DATA/Documents/playback-phim4k-live.json" previews/
       - name: Record logo transitions
         if: always()
         run: |
@@ -245,38 +160,7 @@ jobs:
           path: previews/*
           retention-days: 14
 
-  gateway-video:
-    if: github.event_name == 'workflow_dispatch' && inputs.gateway_frame_only && !inputs.ai_drama_only && !inputs.shorts_only
-    runs-on: macos-26
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare simulator project
-        run: |
-          brew install xcodegen
-          xcodegen generate
-      - name: Build simulator app
-        run: |
-          xcodebuild -quiet -project AnyAnime.xcodeproj -scheme AnyAnime \
-            -configuration Debug -sdk iphonesimulator -derivedDataPath build-simulator \
-            CODE_SIGNING_ALLOWED=NO build
-      - name: Boot simulator and install app
-        run: |
-          ANPINIME_SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if "iPhone" in d["name"] and d["isAvailable"]))')
-          xcrun simctl boot "$ANPINIME_SIMULATOR_ID"
-          xcrun simctl bootstatus "$ANPINIME_SIMULATOR_ID" -b
-          xcrun simctl install "$ANPINIME_SIMULATOR_ID" build-simulator/Build/Products/Debug-iphonesimulator/anpinime.app
-      - name: Verify live gateway and later video frame with captured Core metadata
-        run: bash Tests/phim4k-live-smoke.sh gateway
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: AnPinime_Source2_Gateway_Video
-          path: previews/*
-          retention-days: 14
-
   ai-drama:
-    if: ${{ !inputs.gateway_frame_only }}
     runs-on: macos-26
     timeout-minutes: 40
     env:

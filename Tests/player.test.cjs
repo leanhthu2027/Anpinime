@@ -2,7 +2,8 @@ const {readFileSync} = require('node:fs');
 const assert = require('node:assert/strict');
 const {JSDOM} = require('jsdom');
 const swift = readFileSync('AnyAnime/PlayerView.swift', 'utf8');
-const script = swift.match(/private var fallbackJavaScript: String \{\s*"""([\s\S]*?)"""/)[1].replace(/\\\\/g, '\\');
+const pipCore = readFileSync('AnyAnime/WebPictureInPictureScript.swift', 'utf8').match(/static let core = \"\"\"([\s\S]*?)\"\"\"/)[1];
+const script = swift.match(/private var fallbackJavaScript: String \{\s*"""([\s\S]*?)"""/)[1].replace('\\(WebPictureInPictureScript.core)', pipCore).replace(/\\\\/g, '\\');
 new Function(script);
 
 function fixture(html, setup = () => {}) {

@@ -3,14 +3,12 @@ import SwiftUI
 struct AppSettingsView: View {
     @EnvironmentObject private var service: AnimeService
     var onChooseLibrary: (() -> Void)? = nil
+    @AppStorage("AnPinime.automaticPiP") private var automaticPiP = true
     @AppStorage("AnPinime.autoNext") private var autoNext = true
     @AppStorage("AnPinime.rememberSpeed") private var rememberSpeed = true
     @AppStorage("AnPinime.skipSeconds") private var skipSeconds = 10
     @State private var animeURL = UserDefaults.standard.string(forKey: AnimeSiteConfiguration.customURLKey) ?? ""
     @State private var animeSourceMessage = ""
-    @State private var phim4kURL = UserDefaults.standard.string(forKey: "AnPinime.phim4kURL") ?? ""
-    @State private var phim4kFormat = Phim4KFormat(rawValue: UserDefaults.standard.string(forKey: "AnPinime.phim4kFormat") ?? "") ?? .free1
-    @State private var sourceMessage = ""
 
     var body: some View {
         Form {
@@ -23,6 +21,7 @@ struct AppSettingsView: View {
                 }.frame(maxWidth: .infinity).padding(.vertical, 16)
             }
             Section("Trải nghiệm xem") {
+                Toggle("PiP khi rời ứng dụng", isOn: $automaticPiP)
                 Toggle("Tự phát tập tiếp theo", isOn: $autoNext)
                 Toggle("Ghi nhớ tốc độ phát", isOn: $rememberSpeed)
                 Picker("Tua nhanh / tua lại", selection: $skipSeconds) {
@@ -56,37 +55,7 @@ struct AppSettingsView: View {
                 } header: { Text("Website anime") }
                   footer: { Text("Địa chỉ này dùng chung cho danh sách, tìm kiếm, thông tin, tập phim và lịch chiếu anime. Để trống để tìm tên miền tự động.") }
             }
-            if service.source == .phim4k {
-                Section {
-                    TextField("https://…", text: $phim4kURL)
-                        .keyboardType(.URL).textInputAutocapitalization(.never).disableAutocorrection(true)
-                    Picker("Định dạng", selection: $phim4kFormat) {
-                        ForEach(Phim4KFormat.allCases) { format in
-                            Text(format == .free1 ? "Kiểu API A" : "Kiểu API B").tag(format)
-                        }
-                    }
-                    Button("Lưu địa chỉ kho Free") {
-                        let value = phim4kURL.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !value.isEmpty {
-                            guard let url = URL(string: value), url.scheme == "https", url.host != nil,
-                                  url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
-                                sourceMessage = "Hãy nhập URL HTTPS hợp lệ, không chứa mật khẩu hoặc tham số."
-                                return
-                            }
-                            if AnimeSiteConfiguration.isAutomaticHost(url.host) {
-                                sourceMessage = "Đây là website anime. Hãy lưu trong phần Website anime."
-                                return
-                            }
-                        }
-                        UserDefaults.standard.set(value, forKey: "AnPinime.phim4kURL")
-                        UserDefaults.standard.set(phim4kFormat.rawValue, forKey: "AnPinime.phim4kFormat")
-                        sourceMessage = value.isEmpty ? "Đã dùng lại máy chủ mặc định." : "Đã lưu địa chỉ."
-                        if service.source == .phim4k { Task { await service.loadHome(forceDomainRefresh: true) } }
-                    }.disabled(service.homeLoading)
-                    if !sourceMessage.isEmpty { Text(sourceMessage).font(.footnote).foregroundStyle(.secondary) }
-                } header: { Text(ContentSource.phim4k.title) }
-                  footer: { Text("URL này chỉ thay kho Free đã chọn; kho Premium và kho Free còn lại vẫn dùng cấu hình tự động. Để trống để khôi phục kho Free gốc. Tình trạng từng kho phụ thuộc máy chủ; tên nguồn không bảo đảm mọi phim đều phát được.") }
-            }
+            if service.source == .aether { AetherSettingsSection() }
             Section("Giới thiệu") {
                 LabeledContentCompat(title: "Ứng dụng", value: "AnPinime")
                 LabeledContentCompat(title: "Phiên bản", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.0")

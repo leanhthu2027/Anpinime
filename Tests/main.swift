@@ -40,14 +40,14 @@ let movieDetail = try MovieCatalog.filmDetail(movieJSON, anime: film, base: film
 check(movieDetail.episodes.count == 1, "Feature films expose a playable entry even when detail omits expiring streams")
 let legacyBase = URL(string: "https://legacy.example")!
 let legacyJSON = try MovieCatalog.object(Data(#"{"data":{"APP_DOMAIN_CDN_IMAGE":"https://img.example","items":[{"slug":"sample","name":"Legacy film","poster_url":"uploads/poster.jpg","thumb_url":"uploads/thumb.jpg","year":2026,"quality":"4K","lang":"Vietsub"}]}}"#.utf8))
-let legacy = MovieCatalog.legacyItems(legacyJSON, base: legacyBase, format: .free1)[0]
-check(legacy.source == .phim4k && legacy.imageURL?.absoluteString == "https://img.example/uploads/poster.jpg", "Phim4K retains separate provider and image CDN even without trailing slash")
-check(legacy.bannerURL?.absoluteString == "https://img.example/uploads/thumb.jpg", "Phim4K populates horizontal bannerURL for Featured Hero Carousel")
-check(Phim4KFormat.free1.homeSectionsConfig.map(\.title) == ["Mới cập nhật", "Drama xứ Hàn", "Drama tàu", "Phim Việt", "Hoạt hình", "Phim lẻ mới nhất", "Phim Bộ mới nhất"], "Nguồn phim 2 provides all 6 requested category rows plus Mới cập nhật")
-check(Phim4KFormat.free1.defaultCategories.count > 20, "Nguồn phim 2 provides full genre and country browsing list")
+let legacy = MovieCatalog.legacyItems(legacyJSON, base: legacyBase, format: .free1, source: .kkphim)[0]
+check(legacy.source == .kkphim && legacy.imageURL?.absoluteString == "https://img.example/uploads/poster.jpg", "Public catalog retains separate provider and image CDN even without trailing slash")
+check(legacy.bannerURL?.absoluteString == "https://img.example/uploads/thumb.jpg", "Public catalog populates horizontal bannerURL for Featured Hero Carousel")
+check(MovieAPIFormat.free1.homeSectionsConfig.map(\.title) == ["Mới cập nhật", "Drama xứ Hàn", "Drama tàu", "Phim Việt", "Hoạt hình", "Phim lẻ mới nhất", "Phim Bộ mới nhất"], "KKPhim provides all 6 requested category rows plus Mới cập nhật")
+check(MovieAPIFormat.free1.defaultCategories.count > 20, "KKPhim provides full genre and country browsing list")
 let legacyDetail = try MovieCatalog.object(Data(#"{"movie":{"name":"Legacy film"},"episodes":[{"server_name":"Vietsub","server_data":[{"name":"01","link_m3u8":"https://media.example/a.m3u8","link_embed":"https://embed.example/a"}]}]}"#.utf8))
 let free1Detail = try MovieCatalog.legacyDetail(legacyDetail, anime: legacy)
-check(free1Detail.episodes.first?.source == .phim4k, "Free1 detail maps episodes to the Phim4K resolver")
+check(free1Detail.episodes.first?.source == .kkphim, "Free1 detail maps episodes to the KKPhim resolver")
 let free2 = try MovieCatalog.object(Data(#"{"movie":{"name":"Legacy film","episodes":[{"server_name":"Server A","items":[{"name":"01","embed":"https://embed.example/b"}]}]}}"#.utf8))
 let free2Detail = try MovieCatalog.legacyDetail(free2, anime: legacy)
 check(free2Detail.episodes.count == 1, "Free2 nested episodes and embed links are supported")
@@ -57,7 +57,7 @@ check(runtimeEpisodes.count == 2 && runtimeEpisodes[0].season != runtimeEpisodes
 check(MovieCatalog.legacyStream(["link":"https://stream.example/api/content/stream/hls?movie=test"], base: legacyBase)?.web == false, "Extensionless HLS resolver links use native playback rather than a website")
 check(MovieCatalog.url("javascript:alert(1)", base: filmBase) == nil, "Provider metadata cannot become executable URL schemes")
 var otherSource = film
-otherSource.source = .phim4k
+otherSource.source = .aether
 check(film.id != otherSource.id, "The same path in different sources has a different catalog identity")
 check(MovieCatalog.rating(8.300000000000001) == "8.3", "Movie ratings do not expose floating-point precision artifacts")
 
@@ -105,50 +105,26 @@ check(parsedNguonc.episodes.count == 2 && parsedNguonc.episodes.allSatisfy { $0.
 let parsedKK = try MovieCatalog.legacyDetail(nguoncDetail, anime: kkItems[0])
 check(parsedKK.episodes.allSatisfy { $0.source == .kkphim }, "KKPhim episodes never use source 2 identity")
 
-let coreBase = URL(string: "https://api.phim4k.example")!
-let coreRow: MovieCatalog.Object = ["videos_id": "14973", "title": "Avatar (2009)", "is_tvseries": "0", "video_quality": "4K", "slug": "avatar"]
-let coreMovie = Phim4KCatalog.items([coreRow], base: coreBase)[0]
-check(coreMovie.source == .phim4k && coreMovie.url.query == "type=movie&id=14973", "Phim4K Core uses stable app IDs, not a KKPhim slug search")
-let coreJSON: MovieCatalog.Object = ["videos_id": "14973", "title": "Avatar (2009)", "videos": [
-    ["video_file_id": "a", "label": "2160P REMUX HDR MKV", "file_type": "mkv", "file_url": "https://cdn.phim4k.lol/original-a"],
-    ["video_file_id": "b", "label": "1080P MKV", "file_type": "mkv", "file_url": "https://cdn.phim4k.lol/original-b"]
-]]
-let coreEpisodes = try Phim4KCatalog.detail(coreJSON, anime: coreMovie).episodes
-check(coreEpisodes.count == 2, "All original Phim4K 4K and MKV servers are retained")
-check(coreEpisodes[0].qualityBadge.contains("4K") && coreEpisodes[0].season.contains("REMUX"), "Original Phim4K server labels retain 4K/Remux distinctions")
-check(Phim4KCatalog.stream(coreJSON, seasonID: nil, episodeID: "a", base: coreBase)?.url.absoluteString == "https://cdn.phim4k.lol/original-a", "VIP entries resolve the actual app link, never a relabelled Free1 fallback")
-check(Phim4KCatalog.stream(coreJSON, seasonID: nil, episodeID: "missing", base: coreBase) == nil, "Missing VIP server does not fall back to another server")
-let coreSeries: MovieCatalog.Object = ["season": [
-    ["seasons_id": "10", "seasons_name": "Season 1 4K", "episodes": [["episodes_id": "101", "episodes_name": "01.mkv", "file_url": "https://media.example/one.mkv"]]],
-    ["seasons_id": "20", "seasons_name": "Season 2 4K", "episodes": [["episodes_id": "201", "episodes_name": "01.mkv", "file_url": "https://media.example/two.mkv"]]]
-]]
-check(Phim4KCatalog.episodes(coreSeries, detailURL: coreMovie.url).count == 2, "Phim4K series keep every season and its original episode links")
-check(Phim4KCatalog.stream(coreSeries, seasonID: "20", episodeID: "201", base: coreBase)?.url.lastPathComponent == "two.mkv", "Core playback matches season and episode IDs instead of positional indexes")
-check(Phim4KCatalog.stream(coreSeries, seasonID: "10", episodeID: "201", base: coreBase) == nil, "Core resolver cannot cross seasons")
-let coreCats = Phim4KCatalog.categories(["all_genre": [["genre_id": "45", "name": "Hot"]], "all_country": [["country_id": "1", "name": "Hoa Kỳ"]]])
-check(coreCats.map(\.path).contains("core/genre/45") && coreCats.map(\.path).contains("core/country/1"), "Phim4K categories come from the app's own genre and country IDs")
-let coreGenreRoute = try Phim4KCatalog.listRoute("core/genre/45", base: coreBase, page: 2)
-check(coreGenreRoute.path == "/rest-api/v130/content_by_genre_id" && coreGenreRoute.query == "page=2&id=45", "Core category requests use the original app endpoint and pagination")
 check(!MovieCatalog.isCatalogPath("api/films/the-loai/hanh-dong", format: .free1), "KKPhim rejects NguonC category routes")
 check(!MovieCatalog.isCatalogPath("v1/api/the-loai/hanh-dong", format: .free2), "NguonC rejects KKPhim category routes")
 check(!MovieCatalog.isCatalogPath("https://other.example/v1/api/danh-sach/phim-bo", format: .free1), "Absolute foreign catalog routes are rejected")
-check(MovieCatalog.legacyStream(["link_m3u8": "https://cdn.example/movie.m3u8", "link_embed": "https://player.example/preroll"], base: coreBase)?.url.host == "cdn.example", "Explicit movie HLS is preferred over an advertising web embed")
-check(MovieCatalog.legacyStream(["link": "https://player.example/embed/one"], base: coreBase)?.web == true, "Opaque player links are not mistaken for native media")
+check(MovieCatalog.legacyStream(["link_m3u8": "https://cdn.example/movie.m3u8", "link_embed": "https://player.example/preroll"], base: filmBase)?.url.host == "cdn.example", "Explicit movie HLS is preferred over an advertising web embed")
+check(MovieCatalog.legacyStream(["link": "https://player.example/embed/one"], base: filmBase)?.web == true, "Opaque player links are not mistaken for native media")
 let suite = "AnPinime.tests." + UUID().uuidString
 let historyDefaults = UserDefaults(suiteName: suite)!
 let history = SearchHistory(defaults: historyDefaults)
-history.record("  Avatar  ", source: .phim4k)
-history.record("avatar", source: .phim4k)
+history.record("  Avatar  ", source: .aether)
+history.record("avatar", source: .aether)
 history.record("Anime riêng", source: .anime)
-check(history.queries(for: .phim4k) == ["avatar"], "Search history trims and deduplicates completed searches")
+check(history.queries(for: .aether) == ["avatar"], "Search history trims and deduplicates completed searches")
 check(history.queries(for: .film4k).isEmpty && history.queries(for: .kkphim).isEmpty, "Search history never leaks across providers")
 check(SearchHistory(defaults: historyDefaults).queries(for: .anime) == ["Anime riêng"], "Search history persists when the store is recreated")
-for index in 0..<25 { history.record("Query \(index)", source: .phim4k) }
-check(history.queries(for: .phim4k).count == 20 && history.queries(for: .phim4k).first == "Query 24", "Recent searches are bounded and sorted newest first")
-history.remove("Query 24", source: .phim4k)
-check(!history.queries(for: .phim4k).contains("Query 24"), "Individual search history entries can be deleted")
-history.clear(source: .phim4k)
-check(history.queries(for: .phim4k).isEmpty && history.queries(for: .anime).count == 1, "Clearing history only clears the selected provider")
+for index in 0..<25 { history.record("Query \(index)", source: .aether) }
+check(history.queries(for: .aether).count == 20 && history.queries(for: .aether).first == "Query 24", "Recent searches are bounded and sorted newest first")
+history.remove("Query 24", source: .aether)
+check(!history.queries(for: .aether).contains("Query 24"), "Individual search history entries can be deleted")
+history.clear(source: .aether)
+check(history.queries(for: .aether).isEmpty && history.queries(for: .anime).count == 1, "Clearing history only clears the selected provider")
 historyDefaults.removePersistentDomain(forName: suite)
 let reordered: MovieCatalog.Object = ["movie": ["name": "Reordered"], "episodes": [
     ["server_name": "Lồng tiếng", "server_data": [["name": "01", "slug": "tap-1", "link_m3u8": "https://media.example/dub.m3u8"]]],
@@ -180,11 +156,6 @@ check(ncMenu.contains { $0.title == "Hài" && $0.path == "api/films/the-loai/phi
 let kkOngoing = MovieBrowseCatalog.kkWebsiteItems(try String(contentsOfFile: "Tests/Fixtures/kkphim-ongoing.html", encoding: .utf8))
 check(kkOngoing.count == 2 && kkOngoing.allSatisfy { $0.source == .kkphim && $0.url.host == "phimapi.com" }, "KKPhim website-only lists resolve to its own detail API")
 check(kkOngoing[0].title == "Ván Cờ Của Cô Ấy" && kkOngoing[0].episodeText == "Tập 16", "Website list parsing keeps the actual movie title and episode status")
-let wakanda = try MovieCatalog.object(Data(contentsOf: URL(fileURLWithPath: "Tests/Fixtures/phim4k-wakanda.json")))
-let wakandaEpisodes = Phim4KCatalog.episodes(wakanda, detailURL: coreBase.appendingPathComponent("rest-api/v130/single_details"))
-check(wakandaEpisodes.count == 5, "Wakanda Forever retains all five original Phim4K Premium servers")
-check(wakandaEpisodes.filter { $0.qualityBadge.contains("4K") }.count == 2, "Wakanda keeps both original 2160p variants distinct from the three 1080p variants")
-
 // URL shape observed on the reported Bleach page; markup is a synthetic regression fixture.
 let bleach = Anime(title: "Bleach: Sennen Kessen-hen - Kashin-tan", url: animeBase.appendingPathComponent("phim/bleach-sennen-kessen-hen-kashin-tan-a5985/"), imageURL: nil, episodeText: "", quality: "", score: "")
 let bleachHTML = "<div class='list-episode'><a class='btn-episode' data-hash='ep1' href='/phim/bleach-sennen-kessen-hen-kashin-tan-a5985/tap-01-114773.html'>01</a></div><div class='comment-list'><a href='/phim/bleach-sennen-kessen-hen-kashin-tan-a5985/xem-phim.html'>Lostsky</a></div>"
@@ -224,19 +195,9 @@ check(HTMLParser.detail(from: foreign, anime: nextShow, baseURL: animeBase).epis
 let multiHTML = "<div class='list-episode' data-server='A'><a href='/phim/series-a1/tap-1.html'>1</a><a href='/phim/series-a1/special.html'>Special</a></div><div class='list-episode' data-server='B'><a href='/phim/series-a1/tap-1.html'>1</a></div>"
 let multiple = HTMLParser.detail(from: multiHTML, anime: animeFixture, baseURL: animeBase).episodes
 check(multiple.count == 3 && Set(multiple.map(\.season)) == ["A", "B"], "Distinct episode servers and special are preserved")
-let unavailableCore: MovieCatalog.Object = ["videos": [["video_file_id": "resolver-only", "label": "VIP"]]]
-check(Phim4KCatalog.episodes(unavailableCore, detailURL: coreMovie.url).count == 1, "Core server with an ID remains visible without a direct URL")
-check(Phim4KCatalog.stream(unavailableCore, seasonID: nil, episodeID: "resolver-only", base: coreBase) == nil, "Missing VIP URL never silently changes server")
 let unknownDayHTML = scheduleNextJSHTML.replacingOccurrences(of: "Thứ Hai 23:00", with: "Đã cập nhật")
 let unknownDay = HTMLParser.schedule(from: unknownDayHTML, baseURL: animeBase)
 check(unknownDay[.monday]?.isEmpty == true && unknownDay[.sunday]?.count == 1, "A schedule item with no weekday is not assigned Monday")
-let hlsURL = URL(string: "https://media.example/manifest")!
-check(Phim4KCatalog.mediaKind(status: 200, contentType: "application/vnd.apple.mpegurl", url: hlsURL) == .hls, "HLS can be identified without a filename extension")
-check(Phim4KCatalog.mediaKind(status: 206, contentType: "video/x-matroska", url: hlsURL) == .mkv, "MKV uses response MIME")
-check(Phim4KCatalog.mediaKind(status: 200, contentType: "application/dash+xml", url: hlsURL) == .dash, "DASH uses response MIME")
-check(Phim4KCatalog.mediaKind(status: 403, contentType: "text/html", url: hlsURL) == .authenticationRequired, "HTTP 403 signals authentication required")
-check(Phim4KCatalog.mediaKind(status: 200, contentType: "application/json", url: hlsURL) == .intermediate, "JSON is an intermediate response rather than video")
-check(Phim4KCatalog.mediaKind(status: 200, contentType: "text/html", url: hlsURL, isWeb: true) == .embed, "Declared embed remains a web player")
 print("Extended anime and source isolation regressions passed")
 
 // Synthetic legacy layout based on the publicly indexed weekday/time structure.
@@ -253,8 +214,6 @@ let restored = AnimeScheduleStore.load(defaults: scheduleDefaults)
 check(restored?.0 == cachedAt && restored?.1[.wednesday]?.first?.anime.title == "Anime Thứ Tư", "Schedule cache survives a store reload")
 AnimeScheduleStore.save([:], at: Date(), defaults: scheduleDefaults)
 check(AnimeScheduleStore.load(defaults: scheduleDefaults)?.0 == cachedAt, "Empty schedule never replaces the last good cache")
-check(Phim4KCatalog.mediaKind(prefix: Data([0,0,0,24,0x66,0x74,0x79,0x70])) == .mp4, "MP4 signature works without a video filename extension")
-check(Phim4KCatalog.mediaKind(prefix: Data("#EXTM3U\n".utf8)) == .hls, "Range prefix identifies an HLS playlist")
 
 let verifiedAnimeURL = animeBase.appendingPathComponent("phim/series-a1")
 check(HTMLParser.isVerifiedAnimeDetail("<h1>Anime</h1><a>Xem phim</a>", url: verifiedAnimeURL), "A real detail shape can validate its anime domain")
@@ -297,12 +256,3 @@ for ext in ["ts", "m4s", "mp4", "aac", "vtt", "m3u8"] {
 }
 check(Phim4KRelayNaming.suffix(for: URL(string: "https://media.example/api/content/stream/hls?id=hidden")!) == "m3u8", "Extensionless source-2 HLS remains a playlist")
 check(Phim4KRelayNaming.suffix(for: URL(string: "https://media.example/unsafe.html")!) == "bin", "Unknown media suffixes remain opaque")
-
-// The display change must not invalidate persisted source-2 episode keys or lookup IDs.
-let paddedEpisode = Episode(title: "S01E001", url: URL(string: "https://core.example/show/123")!, number: 1,
-                            season: "VIP/Premium · Season 1", source: .phim4k,
-                            playback: .phim4kCore(detailURL: URL(string: "https://core.example/show/123")!, seasonID: "17", episodeID: "91"))
-check(paddedEpisode.displayTitle == "Tập 1" && paddedEpisode.title == "S01E001"
-      && paddedEpisode.id == "phim4k:https://core.example/show/123|VIP/Premium · Season 1|S01E001|"
-      && paddedEpisode.playback == .phim4kCore(detailURL: URL(string: "https://core.example/show/123")!, seasonID: "17", episodeID: "91"),
-      "Source-2 readable episode labels preserve persisted identity and exact backend lookup IDs")

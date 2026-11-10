@@ -33,7 +33,7 @@ enum MovieCatalog {
         return components.url!
     }
 
-    static func isCatalogPath(_ path: String, format: Phim4KFormat) -> Bool {
+    static func isCatalogPath(_ path: String, format: MovieAPIFormat) -> Bool {
         guard !path.contains("://"), !path.contains(".."), !path.contains("?"), !path.contains("#") else { return false }
         if format == .free1, path == "v1/api/danh-sach" { return true }
         let prefixes = format == .free1 ? ["danh-sach/", "v1/api/danh-sach/", "v1/api/the-loai/", "v1/api/quoc-gia/"]
@@ -127,8 +127,8 @@ enum MovieCatalog {
         return json["sources"] as? [Object] ?? []
     }
 
-    // The IPA's Free1 and Free2 use two different public JSON formats.
-    static func legacyItems(_ json: Object, base: URL, format: Phim4KFormat, source: ContentSource = .phim4k) -> [Anime] {
+    // Public KKPhim and NguonC use two different JSON formats.
+    static func legacyItems(_ json: Object, base: URL, format: MovieAPIFormat, source: ContentSource) -> [Anime] {
         let data = json["data"] as? Object ?? json
         let rows = data["items"] as? [Object] ?? data["movies"] as? [Object] ?? json["items"] as? [Object] ?? []
         let rawImageBase = url(data["APP_DOMAIN_CDN_IMAGE"] ?? json["pathImage"], base: base) ?? base
@@ -218,28 +218,6 @@ enum MovieCatalog {
         return matches.count == 1 ? matches[0] : nil
     }
 
-    static func directEpisodes(from json: Object, detailURL: URL, serverPrefix: String) -> [Episode] {
-        let movie = json["movie"] as? Object ?? [:]
-        let servers = json["episodes"] as? [Object] ?? movie["episodes"] as? [Object] ?? []
-        let movieQuality = text(movie["quality"])
-        var result: [Episode] = []
-        for (serverIndex, server) in servers.enumerated() {
-            let rows = server["server_data"] as? [Object] ?? server["items"] as? [Object] ?? []
-            let rawGroup = text(server["server_name"]).nonempty ?? "Máy chủ \(serverIndex + 1)"
-            let group = serverPrefix.isEmpty ? rawGroup : "\(serverPrefix) · \(rawGroup)"
-            let badge = detectQualityBadge(from: rawGroup + " " + movieQuality)
-            for (index, row) in rows.enumerated() {
-                guard let stream = legacyStream(row, base: detailURL) else { continue }
-                let web = url(row["link_embed"] ?? row["embed"], base: detailURL)
-                let title = text(row["name"]).nonempty ?? "Tập \(index + 1)"
-                result.append(Episode(title: title, url: detailURL, number: index + 1, season: group,
-                                      qualityBadge: badge, source: .phim4k,
-                                      playback: .directStream(url: stream.url, webURL: web, isWeb: stream.web, referer: detailURL)))
-            }
-        }
-        return result
-    }
-
     static func detectQualityBadge(from text: String) -> String {
         let upper = text.uppercased()
         var parts: [String] = []
@@ -274,11 +252,11 @@ enum MovieCatalog {
     static func integer(_ value: Any?) -> Int? { Int(text(value)) }
 }
 
-enum Phim4KFormat: String, CaseIterable, Identifiable {
+enum MovieAPIFormat: String, CaseIterable, Identifiable {
     case free1, free2
     var id: String { rawValue }
-    var title: String { self == .free1 ? "Kiểu API A (Phim4K/KKPhim)" : "Kiểu API B (NguonC)" }
-    var defaultURL: URL { URL(string: self == .free1 ? "https://free.cryboiz.workers.dev" : "https://phim.nguonc.com")! }
+    var title: String { self == .free1 ? "Kiểu API A (KKPhim)" : "Kiểu API B (NguonC)" }
+    var defaultURL: URL { URL(string: self == .free1 ? "https://phimapi.com" : "https://phim.nguonc.com")! }
     var listPath: String { self == .free1 ? "danh-sach/phim-moi-cap-nhat-v3" : "api/films/phim-moi-cap-nhat" }
     var detailPath: String { self == .free1 ? "phim/" : "api/film/" }
     var searchPath: String { self == .free1 ? "v1/api/tim-kiem" : "api/films/search" }

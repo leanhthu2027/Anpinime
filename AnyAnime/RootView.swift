@@ -35,6 +35,7 @@ struct RootView: View {
     @State private var selectedLibraryTab = 0
 
     init() {
+        MovieSourceMigration.migrate()
         #if DEBUG
         if AIDramaDebugSupport.fixtureEnabled {
             AIDramaDebugSupport.clearFixtureProgress()
@@ -117,6 +118,7 @@ struct RootView: View {
 
     private func chooseLibrary(_ library: AppLibrary) {
         guard transition == nil else { return }
+        NotificationCenter.default.post(name: Notification.Name("AnPinime.libraryWillChange"), object: nil)
         let old = selectedLibrary.logoName
         let new = library.logoName
         selectedLibraryTab = 0
@@ -146,15 +148,17 @@ struct RootView: View {
                 .tabItem { Label("Trang chủ", systemImage: "house.fill") }
                 .tag(0)
 
-            NavigationView { AnimeSearchView() }
-                .navigationViewStyle(.stack)
-                .tabItem { Label("Tìm kiếm", systemImage: "magnifyingglass") }
-                .tag(1)
+            if service.source != .aether {
+                NavigationView { AnimeSearchView() }
+                    .navigationViewStyle(.stack)
+                    .tabItem { Label("Tìm kiếm", systemImage: "magnifyingglass") }
+                    .tag(1)
 
-            NavigationView { BrowseView() }
-                .navigationViewStyle(.stack)
-                .tabItem { Label("Thể loại", systemImage: "square.grid.2x2.fill") }
-                .tag(2)
+                NavigationView { BrowseView() }
+                    .navigationViewStyle(.stack)
+                    .tabItem { Label("Thể loại", systemImage: "square.grid.2x2.fill") }
+                    .tag(2)
+            }
 
             if !service.source.isMovie {
                 NavigationView { AnimeScheduleView() }
@@ -237,7 +241,9 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            if service.homeSections.isEmpty && service.homeLoading {
+            if service.source == .aether {
+                AetherBrowserView()
+            } else if service.homeSections.isEmpty && service.homeLoading {
                 LoadingView(text: "Đang tải danh sách \(service.contentName)…")
             } else if service.homeSections.isEmpty {
                 EmptyStateView(
@@ -287,7 +293,7 @@ struct HomeView: View {
                     }.accessibilityLabel("Đổi thư viện")
                     if service.source.isMovie {
                         Menu {
-                            ForEach([ContentSource.film4k, .phim4k, .kkphim]) { source in
+                            ForEach([ContentSource.film4k, .aether, .kkphim]) { source in
                                 Button { service.selectSource(source) } label: {
                                     Label(source.title, systemImage: source == service.source ? "checkmark.circle.fill" : "circle")
                                 }

@@ -307,9 +307,13 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 if resolved.isWeb { self.startFallback(url: resolved.url) }
                 else if self.shouldUseMediaRelay(for: resolved.url) {
                     self.filmRelay?.stop()
+                    var preserveExtensions = false
+                    #if DEBUG
+                    preserveExtensions = PlaybackSmokeTest.source2HLS
+                    #endif
                     let relay = FilmMediaRelay(origin: self.baseURL, headers: resolved.headers,
-                                              preserveMediaExtensions: self.episode.source == .phim4k,
-                                              useSharedCookies: self.episode.source != .phim4k)
+                                              preserveMediaExtensions: preserveExtensions,
+                                              useSharedCookies: true)
                     relay.onQualities = { [weak self] options in
                         guard let self, self.active else { return }
                         if self.playback.qualities != options { self.playback.qualities = options }
@@ -507,13 +511,12 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         if case .film4k = episode.playback {
             return ext == "m3u8" || url.path.hasSuffix("/stream/hls")
         }
-        // For Nguồn phim 2 (.phim4k), standard .m3u8/.mp4 streams play directly from CDN via HTTP/2 for maximum speed.
         // Extensionless HLS endpoints (like /api/content/stream/hls) use FilmMediaRelay so AVPlayer receives a .m3u8 URL.
         return url.path.contains("/stream/hls") || (ext.isEmpty && url.path.lowercased().contains("hls"))
     }
 
     private func showNativePlayer(url: URL, referer: URL? = nil) {
-        guard active, playerController == nil, mpvController == nil,
+        guard !episode.source.requiresWebsitePlayback, active, playerController == nil, mpvController == nil,
               !playback.pictureInPictureActive, !playback.pictureInPicturePending else { return }
         resetWebPictureInPicture()
         fallbackTimer?.invalidate()
@@ -523,11 +526,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         playback.error = nil
         var headers = ["User-Agent": AnimeService.userAgent, "Referer": (referer ?? episodeURL).absoluteString]
         if episode.source.isMovie {
-            if episode.source == .phim4k, !providerIsWeb {
-                // Original media_kit sends only the source-2 media map (oxoo),
-                // not the Core API/website Referer, Origin or account cookies.
-                headers = providerHeaders
-            } else { headers.merge(providerHeaders) { _, provider in provider } }
+            headers.merge(providerHeaders) { _, provider in provider }
             if let referer {
                 headers["Referer"] = referer.absoluteString
                 if let scheme = referer.scheme, let host = referer.host { headers["Origin"] = scheme + "://" + host }
@@ -535,8 +534,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             // A provider's session ticket must never be forwarded to a third-party iframe/CDN.
             if url.host != baseURL.host { headers.removeValue(forKey: "X-F4K-PT") }
         }
-        let cookies: [HTTPCookie] = episode.source == .phim4k && !providerIsWeb
-            ? [] : (HTTPCookieStorage.shared.cookies(for: url) ?? [])
+        let cookies: [HTTPCookie] = HTTPCookieStorage.shared.cookies(for: url) ?? []
         var useMPV = true
         #if DEBUG
         // Retain the independent AVPlayer smoke test; mpv has its own MKV fixture.
@@ -754,24 +752,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 return PlaybackChoice(id: id, title: option.displayName)
             }
         }
-        #if DEBUG
-        if episode.source == .phim4k {
-            print("[Phim4K] audio_track_count=\(playback.audioTracks.count)")
-            print("[Phim4K] subtitle_track_count=\(playback.subtitleTracks.count)")
-            print("[Phim4K] audio_selected=\(playback.audioTrack)")
-            print("[Phim4K] subtitle_selected=\(playback.subtitleTrack)")
-        }
-        #endif
     }
 
     private func chooseOption(_ kind: String, id: String) {
         guard active else { return }
-        #if DEBUG
-        if episode.source == .phim4k {
-            if kind == "audio" { print("[Phim4K] audio_selected=\(id)") }
-            if kind == "subtitles" { print("[Phim4K] subtitle_selected=\(id)") }
-        }
-        #endif
         if let mpvController { mpvController.choose(kind, id: id); return }
         guard let item = playerController?.player?.currentItem else {
             let payload = ["type": "AnPinimeCommand", "name": "track", "kind": kind, "id": id]
@@ -1112,59 +1096,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
               }
             });
           }
-          function supportsPiP(v){
-            if(!v)return false;
-            try{return !!((v.webkitSetPresentationMode&&(!v.webkitSupportsPresentationMode||v.webkitSupportsPresentationMode('picture-in-picture')))||(v.requestPictureInPicture&&document.pictureInPictureEnabled&&!v.disablePictureInPicture));}catch(e){return false;}
-          }
-          var pipContexts=new WeakMap(),pipSequence=0;
-          var pipDocumentID=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
-          function pipActive(v){return !!v&&(v.webkitPresentationMode==='picture-in-picture'||document.pictureInPictureElement===v);}
-          function pipContext(v){
-            var source=v.currentSrc||v.getAttribute('src')||'',c=pipContexts.get(v);
-            if(!c||(c.source!==source&&!pipActive(v)&&c.pendingAt===null&&!c.active)){
-              c={sessionID:pipDocumentID+'-'+(++pipSequence),source:source,requestID:'',pendingAt:null,active:false,error:''};pipContexts.set(v,c);
-            }
-            return c;
-          }
-          function pipNotice(c,status,error){send('pipState',{sessionID:c.sessionID,requestID:c.requestID,status:status,error:error||''});}
-          function syncPiP(v,c){
-            if(pipContexts.get(v)!==c)return;
-            if(pipActive(v)){
-              if(!c.active||c.pendingAt!==null){c.active=true;c.pendingAt=null;c.error='';pipNotice(c,'active','');}
-            }else if(c.active){c.active=false;c.pendingAt=null;c.error='';pipNotice(c,'stopped','');}
-            else if(c.pendingAt!==null&&Date.now()-c.pendingAt>=1500){c.pendingAt=null;c.error='timeout';pipNotice(c,'error',c.error);}
-          }
-          function pipPending(v){if(!v)return false;var c=pipContext(v);syncPiP(v,c);return c.pendingAt!==null&&!pipActive(v);}
-          function requestPiP(v,command){
-            if(!v)return;
-            var c=pipContext(v),input=command||{};syncPiP(v,c);
-            // Native commands are broadcast to child frames. A different
-            // document must never acknowledge another session's request.
-            if(input.sessionID&&input.sessionID!==c.sessionID)return;
-            // Coalesce repeated bridge/manual requests without replacing the
-            // identity that owns the asynchronous presentation.
-            if(pipActive(v)||c.pendingAt!==null)return;
-            c.requestID=input.requestID||('legacy-'+(++pipSequence));c.error='';
-            var reason=v.paused?'paused':isAdvertisement(v)?'advertisement':input.name==='pipAutomatically'&&!automaticPiP?'automatic-disabled':!supportsPiP(v)?'unsupported':'';
-            if(reason){c.error=reason;pipNotice(c,'error',reason);return;}
-            var id=c.requestID;c.pendingAt=Date.now();pipNotice(c,'pending','');
-            function current(){return pipContexts.get(v)===c&&c.requestID===id&&activeVideo===v;}
-            function failed(){if(!current()||c.pendingAt===null)return;c.pendingAt=null;c.error='rejected';pipNotice(c,'error',c.error);state();}
-            try{
-              if(v.webkitSetPresentationMode&&(!v.webkitSupportsPresentationMode||v.webkitSupportsPresentationMode('picture-in-picture')))v.webkitSetPresentationMode('picture-in-picture');
-              else {var p=v.requestPictureInPicture();if(p&&p.then)p.then(function(){if(current()){syncPiP(v,c);state();}},failed);}
-              syncPiP(v,c);
-              setTimeout(function(){if(current()){syncPiP(v,c);state();}},1500);
-            }catch(e){failed();}
-          }
-          function stopPiP(v){
-            if(!v)return;var c=pipContext(v),wasPending=c.pendingAt!==null;c.pendingAt=null;c.error='';
-            try{
-              if(v.webkitPresentationMode==='picture-in-picture'&&v.webkitSetPresentationMode)v.webkitSetPresentationMode('inline');
-              else if(document.pictureInPictureElement===v&&document.exitPictureInPicture){var p=document.exitPictureInPicture();if(p&&p.catch)p.catch(function(){});}
-            }catch(e){}
-            syncPiP(v,c);if(wasPending&&!pipActive(v))pipNotice(c,'stopped','stopped');
-          }
+          \(WebPictureInPictureScript.core)
           function hidePauseOverlays(root){
             function keepMedia(el){
               Array.from(el.children).forEach(function(child){

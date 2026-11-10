@@ -1,6 +1,8 @@
 # AnPinime (iOS 15+)
 
-Ứng dụng xem anime và phim với danh sách, tìm kiếm, thể loại và trình phát toàn màn hình. Mỗi lần khởi động, chọn **Anime** hoặc **Phim**; chạm logo ở trang chủ để chọn lại. Trong mục Phim, menu cạnh logo đổi giữa **Nguồn phim 1 (NguonC)**, **Nguồn phim 2 (Phim4K)** và **Nguồn phim 3 (KKPhim)**. Danh sách, tìm kiếm và tập phim của các nguồn không bị trộn chung.
+Ứng dụng gồm ba thư viện **Anime**, **Phim**, **Phim AI**. Chạm logo ở trang chủ để chọn lại thư viện. Trong Phim, menu nguồn gồm **Anpinime Free (NguonC)**, **Aether** và **Anpinime dự phòng (KKPhim)**. Dữ liệu của các nguồn không bị trộn chung.
+
+Nhánh migration Aether dùng website trong WKWebView cho danh sách, tìm kiếm, thể loại, chi tiết, season/tập và phát phim. Điều khiển phụ đề và nút dịch của website được giữ nguyên nếu website hỗ trợ; app không chuyển video Aether sang MPV. API và route Aether live chưa được xác minh do proxy môi trường chặn truy cập. Xem [báo cáo migration/PiP](AETHER_PIP_MIGRATION_REPORT.md) trước khi đánh giá bản này trên iPhone.
 
 Màn hình chờ phim dùng ảnh nền và tên phim nhấp nháy; trình phát có danh sách tập, tua, tốc độ, tỉ lệ hình, khóa chạm, độ sáng và tự phát tập tiếp theo. Luồng native có nhiều track cho phép chọn âm thanh và phụ đề trong cài đặt trình phát.
 
@@ -46,25 +48,19 @@ Dùng API `https://phimapi.com` được công bố tại [tài liệu KKPhim](h
 - Dùng tên miền anime đã lưu trước, resolve lại khi lỗi kết nối; thử lại một lần với lỗi mạng/HTTP 5xx. Yêu cầu WebKit bị hủy khi tác vụ không còn cần.
 - Web player đặt viewport theo thiết bị, bỏ inset tự động và transform của trang; mặc định giữ tỉ lệ video (`contain`). Các tab dùng điều hướng một cột trên điện thoại. Bỏ dòng trạng thái “Đã kết nối”.
 
-### Nguồn phim 2 · app Phim4K
+### Nguồn phim 2 · Aether (MVP web)
 
-Nguồn này sử dụng cấu hình của IPA Phim4K 2.8.4, không phải website Film4k.net. `MovieSourceDirectory` đọc directory AES-GCM của app và lưu địa chỉ hợp lệ gần nhất. Tích hợp ba kho của app:
+Mở nguồn Aether rồi sử dụng chính thanh tìm kiếm, danh mục, trang chi tiết và danh sách tập trong website. Native UI không giả lập một API Aether bằng TMDB. Chọn Vietnamese trong phụ đề hoặc dùng nút Translate của website nếu có; đây chưa phải xác nhận dịch/phát live trên iPhone.
 
-- **Phim4K Core**: trang chủ, phim lẻ/phim bộ, tìm kiếm, thể loại/quốc gia theo ID của REST API `/rest-api/v130/`. Chi tiết dùng `videos_id`; giữ toàn bộ máy chủ trong `videos` và các phần/tập trong `season`.
-- **Phim4K · Free1**: API định dạng A, qua địa chỉ `free1` do app công bố.
-- **Phim4K · Free2**: API định dạng B, qua địa chỉ `free2` do app công bố. Khi máy chủ này lỗi, hiển thị lỗi; không đổi sang `phim.nguonc.com`.
+Resolver đọc liên kết HTTPS từ `https://rentry.co/aetherdomains`, giới hạn hostname và kiểm tra redirect trước khi theo. Snapshot ban đầu: `aether.st`, `aether.ist`, `aether.cx`, `aether.bar`; trạng thái live chưa xác nhận. Cache danh sách 6 giờ, tên miền hoạt động 1 giờ; lỗi không tạo spinner vô hạn. Settings cho phép chọn tên miền trong danh sách hoặc để trống để tự động. Phiên duyệt giữ nguyên tên miền; đổi Settings chỉ áp dụng phiên mới. Dùng **Kết thúc phiên** rồi **Mở Aether** để bắt đầu lại.
 
-Kết quả tìm kiếm ghi rõ kho. Mỗi danh mục gắn với đúng kho và endpoint. Free1 hiện có danh mục giống KKPhim ở phía máy chủ; điều này không có nghĩa Core và KKPhim là một nguồn. App không tự gọi trực tiếp NguonC/KKPhim để thay dữ liệu Core.
-
-Các bản 4K/Remux/MKV giữ nguyên nhãn và liên kết từ Core. Khi phát, chọn lại đúng ID máy chủ/tập trong phản hồi mới; không gắn nhãn VIP lên một link Free1 thay thế. Máy chủ Vietsub/lồng tiếng ở NguonC, KKPhim và Free1/Free2 cũng được chọn theo tên máy chủ + slug tập, tránh đổi nhầm khi API sắp xếp lại danh sách.
-
-Tùy chọn URL thủ công trong Cài đặt vẫn dành cho API Free1/Free2. Để trống để dùng đầy đủ cấu hình tự động của app Phim4K. Tài khoản, đăng ký và plugin từ app tham chiếu không được sử dụng.
+Nguồn Phim4K/Core/Free và cấu hình riêng đã ra khỏi production. Mã và test chỉ phục vụ tích hợp cũ nằm trong [archive](Tools/archive/phim4k/README.md). Các parser JSON, relay, transport/probe, MKV, audio và phụ đề dùng chung vẫn được giữ. Lựa chọn nguồn cũ `phim4k` được migrate sang `aether`; lịch sử cũ không được nhận làm lịch sử Aether.
 
 ### Phát phim và lịch sử tìm kiếm
 
 Ưu tiên link HLS do API cung cấp. Nếu link trực tiếp lỗi, không tự chuyển sang trang embed có quảng cáo. Với phim chỉ có embed, trình phát loại video quảng cáo khỏi việc chuyển sang AVPlayer và khỏi sự kiện tự chuyển tập. JW Player dùng nguồn trong playlist của phim, không lấy video đầu trang hoặc một request m3u8 bất kỳ. Giữ màn hình xác minh khi player còn chờ tải.
 
-Lịch sử tìm kiếm lưu trên thiết bị, riêng cho Anime/NguonC/Phim4K/KKPhim, tối đa 20 từ khóa mỗi nguồn. Lưu khi bấm Tìm trên bàn phím hoặc mở một kết quả; chạm từ khóa cũ để tìm lại, vuốt để xóa từng mục hoặc chọn Xóa lịch sử.
+Lịch sử tìm kiếm lưu trên thiết bị, riêng cho Anime/NguonC/KKPhim (lịch sử Phim4K cũ vẫn được giữ riêng), tối đa 20 từ khóa mỗi nguồn. Lưu khi bấm Tìm trên bàn phím hoặc mở một kết quả; chạm từ khóa cũ để tìm lại, vuốt để xóa từng mục hoặc chọn Xóa lịch sử.
 
 ## Build IPA
 
@@ -96,7 +92,7 @@ Các bước riêng kiểm tra cả hai nguồn trực tiếp trên mạng và l
 
 Website nguồn có thể thay HTML, player hoặc chính sách chống bot bất kỳ lúc nào. Resolver xử lý việc đổi domain, nhưng selector và cơ chế player vẫn cần cập nhật nếu website thay đổi cấu trúc lớn.
 
-### Kiểm tra thay đổi nguồn (27/10/2026)
+### Kiểm tra thay đổi nguồn (27/10/2026 — bằng chứng lịch sử trước migration Aether)
 
 NguonC: đọc được tài liệu, danh sách và chi tiết/tập; trang embed StreamC yêu cầu Cloudflare trong Chromium của môi trường kiểm tra, nên chưa xác nhận phát thực tế trên iPhone.
 
@@ -106,7 +102,7 @@ Phim4K: directory hiện trả `api.phim4k.space`, `free.cryboiz.workers.dev`, `
 
 `Tests/ProviderTests.swift` chạy provider thật qua URLSession giả lập, ghi nhận host/path/header cho trang chủ → tìm kiếm → danh mục → chi tiết → phát; kiểm tra khi lỗi không đổi nguồn, Core giữ nguyên link VIP và API-KEY chỉ gửi đến Core. `Tests/main.swift` kiểm tra ID phần/tập, đảo thứ tự server và lịch sử tìm kiếm. `Tests/player.test.cjs` kiểm tra quảng cáo đứng trước phim, preroll dùng chung thẻ video, kết thúc quảng cáo không chuyển tập, và giữ màn hình xác minh. Fixture Film4k cũ chỉ kiểm tra ticket/relay, không đại diện cho nguồn 1 hiện tại.
 
-### Bản 2.3.2 (build 8): danh mục riêng và tập anime
+### Bản 2.3.2 (build 8): danh mục riêng và tập anime — lịch sử
 
 - KKPhim có đủ 12 danh sách theo website, 26 thể loại và 36 quốc gia dự phòng; thể loại/quốc gia cập nhật từ API của KKPhim. Hai mục phim bộ đang chiếu/đã hoàn thành hiện trả 404 ở API danh sách, nên lấy bảng phim và phân trang từ chính `kkphim.com`, sau đó mở chi tiết qua `phimapi.com`.
 - NguonC có 22 thể loại, bốn danh sách TV shows/phim lẻ/phim bộ/phim AI, quốc gia, năm và ngôn ngữ. Menu cập nhật từ website NguonC và có dữ liệu dự phòng khi website lỗi.

@@ -80,6 +80,7 @@ actor AetherDomainResolver {
     struct Selection: Equatable {
         let origin: URL
         let verifiedHosts: Set<String>
+        var needsVerification = false
     }
     private struct DirectoryCache: Codable { let domains: [URL]; let date: Date }
     private struct WorkingCache: Codable { let origin: URL; let date: Date }
@@ -128,6 +129,7 @@ actor AetherDomainResolver {
         if !force, let selection, date.timeIntervalSince(selectedAt) >= 0,
            date.timeIntervalSince(selectedAt) < workingTTL,
            manual == nil || AetherDomainPolicy.manualOrigin(manual!) == selection.origin { return selection }
+        selection = nil
         let domains = await officialDomains(force: force)
         try Task.checkCancellation()
         let hosts = Set(domains.compactMap(\.host))
@@ -141,15 +143,21 @@ actor AetherDomainResolver {
                   domains.contains(cache.origin) {
             candidates = [cache.origin] + domains.filter { $0 != cache.origin }
         }
+        var challengedOrigin: URL?
         for candidate in candidates.prefix(8) {
             try Task.checkCancellation()
             do {
                 let (body, response) = try await fetch(candidate, hosts: hosts)
-                guard (200..<300).contains(response.statusCode), let final = response.url,
+                guard let final = response.url,
                       let origin = AetherDomainPolicy.origin(final), domains.contains(origin),
                       let html = String(data: body, encoding: .utf8),
-                      html.range(of: #"(?i)<(?:!doctype\s+html|html)\b"#, options: .regularExpression) != nil,
-                      !html.lowercased().contains("cf-chl-"), !html.lowercased().contains("<title>just a moment") else { continue }
+                      html.range(of: #"(?i)<(?:!doctype\s+html|html)\b"#, options: .regularExpression) != nil else { continue }
+                if [200, 403].contains(response.statusCode),
+                   html.lowercased().contains("cf-chl-") || html.lowercased().contains("<title>just a moment") {
+                    challengedOrigin = challengedOrigin ?? origin
+                    continue // Prefer a normal mirror, otherwise show verification in WebKit.
+                }
+                guard (200..<300).contains(response.statusCode) else { continue }
                 let result = Selection(origin: origin, verifiedHosts: hosts)
                 selection = result; selectedAt = date
                 defaults.set(try JSONEncoder().encode(WorkingCache(origin: origin, date: date)), forKey: workingKey)
@@ -158,6 +166,11 @@ actor AetherDomainResolver {
                 try Task.checkCancellation()
                 if (error as? URLError)?.code == .cancelled { throw error }
             }
+        }
+        if let challengedOrigin {
+            // A reachable challenge is not a working-domain cache entry and is
+            // never solved/bypassed by the resolver. Let the user interact with it.
+            return Selection(origin: challengedOrigin, verifiedHosts: hosts, needsVerification: true)
         }
         throw AetherError.unavailable
     }

@@ -55,6 +55,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == "/__health":
+            self.send_json({"service": "anpinime-media-fixture", "pid": os.getpid(), "relayHLS": SOURCE2_HLS})
+            return
         if ANIME_NATIVE_FAILURE and path == "/__smoke__/native-fallback":
             self.send_json({"service": "anpinime-native-fallback", "pid": os.getpid(),
                             "nativeRejectedRequests": Handler.fallback_native_rejected,
@@ -130,15 +133,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"movie": movie, "episodes": [], "sources": [{"url": stream}]})
             return
         if path == "/danh-sach/phim-moi-cap-nhat-v3":
-            self.send_json({"items": [{"slug": "legacy", "name": "Phim4K kiểm thử"}]})
+            self.send_json({"items": [{"slug": "legacy", "name": "JSON/HLS kiểm thử"}]})
             return
         if path == "/phim/legacy":
             row = {"name": "01", "link": "http://127.0.0.1:8765/api/content/stream/hls?fixture=1"} if SOURCE2_HLS else {"name": "01", "link_m3u8": "http://127.0.0.1:8765/legacy.mp4"}
-            self.send_json({"movie": {"name": "Phim4K kiểm thử"}, "episodes": [{"server_name": "Vietsub", "server_data": [row]}]})
+            self.send_json({"movie": {"name": "JSON/HLS kiểm thử"}, "episodes": [{"server_name": "Vietsub", "server_data": [row]}]})
             return
         if SOURCE2_HLS and (path == "/api/content/stream/hls" or path.startswith("/source2-hls/")):
-            if self.headers.get("User-Agent") != "oxoo" or any(self.headers.get(key) for key in ("Origin", "Referer", "API-KEY", "Authorization", "Cookie")):
-                self.send_error(403, "Source 2 media requires its original header map")
+            if ("Safari/605.1.15" not in self.headers.get("User-Agent", "")
+                    or self.headers.get("Origin") != "http://127.0.0.1:8765"
+                    or self.headers.get("Referer") != "http://127.0.0.1:8765/"
+                    or any(self.headers.get(key) for key in ("API-KEY", "Authorization", "Cookie"))):
+                self.send_error(403, "Shared JSON/HLS fixture requires its public-provider media headers")
                 return
             name = "index.m3u8" if path == "/api/content/stream/hls" else path.removeprefix("/source2-hls/")
             if name != "index.m3u8" and ("/" in name or not name.endswith(".ts")):

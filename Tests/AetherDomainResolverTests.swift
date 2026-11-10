@@ -56,6 +56,10 @@ private final class AetherFixture: URLProtocol {
         AetherFixture.reset(["aether.ist": (200, "<html>App</html>", nil)])
         let restoredResult = try await restored.resolve()
         require(restoredResult.origin == result.origin && AetherFixture.captured == ["aether.ist"], "last working domain persists, is re-probed and official directory TTL survives restart")
+        let expired = AetherDomainResolver(session: session, defaultsSuiteName: name, now: { Date().addingTimeInterval(2 * 3600) })
+        AetherFixture.reset(["aether.st": (200, "<html>App</html>", nil)])
+        let expiredResult = try await expired.resolve()
+        require(expiredResult.origin.host == "aether.st" && AetherFixture.captured == ["aether.st"], "expired working-domain TTL triggers a fresh ordered probe without reusing stale success")
         try await resolver.setManualDomain("https://aether.cx")
         AetherFixture.reset(["aether.cx": (503, "down", nil), "aether.st": (200, "<html>App</html>", nil)])
         do { _ = try await resolver.resolve(); fatalError("Manual failure must be reported") } catch AetherError.unavailable {}
@@ -69,6 +73,16 @@ private final class AetherFixture: URLProtocol {
         AetherFixture.reset(["rentry.co": (200, "https://evil.example https://aether.st", "https://evil.example/"), "aether.st": (200, "<html>App</html>", "https://evil.example/")])
         do { _ = try await resolver.resolve(force: true); fatalError("Foreign final URLs must fail") } catch AetherError.unavailable {}
         require(!AetherFixture.captured.contains("evil.example") && AetherFixture.captured.count <= 9, "foreign final responses are never trusted or used as probe destinations")
+        let staleDirectory = AetherDomainResolver(session: session, defaultsSuiteName: name, now: { Date().addingTimeInterval(8 * 86400) })
+        AetherFixture.reset(["aether.st": (200, "<html>App</html>", nil)])
+        let staleResult = try await staleDirectory.resolve()
+        require(staleResult.origin.host == "aether.st" && AetherFixture.captured == ["rentry.co", "aether.st"], "expired official directory cache cannot retain an unrefreshed additional host")
+        AetherFixture.reset(["aether.st": (403, "<html><title>Just a moment</title><div id='cf-chl-widget'>Verify</div></html>", nil)])
+        let challenge = try await staleDirectory.resolve(force: true)
+        require(challenge.needsVerification && challenge.origin.host == "aether.st", "reachable verification may open in WebKit without claiming it is a working mirror")
+        AetherFixture.reset([:])
+        do { _ = try await staleDirectory.resolve(); fatalError("A challenge is not a cached success") } catch AetherError.unavailable {}
+        require(AetherFixture.captured.contains("aether.st"), "challenge responses are never cached as working-domain success")
         let guardDelegate = AetherRedirectGuard(hosts: ["aether.st", "aether.cx"])
         let task = session.dataTask(with: AetherDomainPolicy.defaultURL)
         let response = HTTPURLResponse(url: AetherDomainPolicy.defaultURL, statusCode: 302, httpVersion: nil, headerFields: nil)!

@@ -1,182 +1,40 @@
 import Foundation
-import CryptoKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-
-// Runs the production providers through URLSession, so a correctly labelled model
-// cannot hide a request sent to the wrong upstream.
 final class ProviderProtocol: URLProtocol {
     static let lock = NSLock()
     static var requests: [URLRequest] = []
     static var failingHost: String?
-    static var mediaStatus = 200
-    static var mediaType = "video/x-matroska"
-    static var mediaGetStatus = 206
-    static var mediaGetType = "video/mp4"
-    static var mediaGetPrefix = Data([0,0,0,24,0x66,0x74,0x79,0x70,0x69,0x73,0x6f,0x6d])
-    static var directoryEnvelope = Data()
-    static var coreVideoRows: [[String: Any]]?
-    static var gatewayStatus = 200
-    static var gatewayType = "application/json"
-    static var gatewayBody = Data(#"{"url":"https://vip.example/resolved.mkv?token=media-fixture"}"#.utf8)
-    static var gatewayFailure: URLError?
-    static var freeMediaURL: String?
+    static func reset(failing: String? = nil) { lock.lock(); defer { lock.unlock() }; requests=[]; failingHost=failing }
+    static func captured() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
     override func startLoading() {
-        Self.lock.lock()
-        Self.requests.append(request)
-        let failing = Self.failingHost
-        let mediaStatus = Self.mediaStatus
-        let mediaType = Self.mediaType
-        let mediaGetStatus = Self.mediaGetStatus
-        let mediaGetType = Self.mediaGetType
-        let mediaGetPrefix = Self.mediaGetPrefix
-        let directoryEnvelope = Self.directoryEnvelope
-        let coreVideoRows = Self.coreVideoRows
-        let gatewayStatus = Self.gatewayStatus, gatewayType = Self.gatewayType, gatewayBody = Self.gatewayBody
-        let gatewayFailure = Self.gatewayFailure
-        let freeMediaURL = Self.freeMediaURL
-        Self.lock.unlock()
-        let url = request.url!, host = url.host!, path = url.path
-        var status = 200
-        var body: Any
+        Self.lock.lock(); Self.requests.append(request); let failing=Self.failingHost; Self.lock.unlock()
+        let url=request.url!, host=url.host!, path=url.path
+        var status=200
+        let body: Any
         var html: String?
-        if host == "rip.cryboiz.workers.dev", path == "/api/add" {
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: directoryEnvelope)
-            client?.urlProtocolDidFinishLoading(self)
-            return
-        }
-        if ["gateway.example", "gateway-new.example"].contains(host) {
-            if let gatewayFailure { client?.urlProtocol(self, didFailWithError: gatewayFailure); return }
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: gatewayStatus, httpVersion: nil, headerFields: ["Content-Type": gatewayType])!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: gatewayBody)
-            client?.urlProtocolDidFinishLoading(self)
-            return
-        }
-        if ["vip.example", "media-new.example"].contains(host), request.httpMethod == "GET" {
-            let body = mediaGetType.contains("json") ? Data("{\"error\":true}".utf8) : mediaGetPrefix
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: mediaGetStatus, httpVersion: nil, headerFields: ["Content-Type": mediaGetType, "Content-Range": "bytes 0-11/12285989889"])!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: body)
-            client?.urlProtocolDidFinishLoading(self)
-            return
-        }
-        if ["vip.example", "media-new.example"].contains(host), request.httpMethod == "HEAD" {
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: mediaStatus, httpVersion: nil, headerFields: ["Content-Type": mediaType])!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocolDidFinishLoading(self)
-            return
-        }
-        if host == failing { status = 503; body = ["error": "Unavailable"] }
-        else if host == "kkphim.com" {
-            html = try! String(contentsOfFile: "Tests/Fixtures/kkphim-ongoing.html", encoding: .utf8)
-            body = [:]
-        } else if path == "/the-loai" || path == "/quoc-gia" {
-            body = ["items": [["slug": "own-taxonomy", "name": "Own category"]]]
-        } else if host == "core.example" {
-            let movie: [String: Any] = ["videos_id": "41", "title": "Core movie 4K", "is_tvseries": "0"]
-            switch path {
-            case "/rest-api/v130/home_content_for_android":
-                body = ["latest_movies": [movie], "all_genre": [["genre_id": "45", "name": "Hot"]]]
-            case "/rest-api/v130/search": body = ["movie": [movie], "tvseries": []]
-            case "/rest-api/v130/single_details":
-                body = ["videos_id": "41", "title": "Core movie 4K", "videos": coreVideoRows ?? [
-                    ["video_file_id": "a", "label": "VIP 2160P REMUX", "file_type": "mkv", "file_url": "https://vip.example/original.mkv"],
-                    ["video_file_id": "b", "label": "1080P", "file_type": "mp4", "file_url": "https://vip.example/original.mp4"]]]
-            default: body = [movie]
-            }
-        } else if host == "free1.example", path.hasPrefix("/phim/") {
-            body = ["movie": ["name": "Free1 original"], "episodes": [["server_name": "Vietsub", "server_data": [
-                ["name": "Tập 01", "slug": "tap-01", "link": freeMediaURL ?? "https://stream.example/api/content/stream/hls?movie=shared-slug&server=Vietsub&slug=tap-01"]]]]]
-        } else if path.hasPrefix("/phim/") || path.hasPrefix("/api/film/") {
-            let rows: [[String: Any]] = [["name": "01", "slug": "tap-1", "link_m3u8": "https://" + host + "/movie.m3u8", "link_embed": "https://" + host + "/advertising-player"]]
-            body = ["movie": ["name": host], "episodes": [["server_name": "Vietsub", "server_data": rows]]]
-        } else {
-            body = ["items": [["slug": "shared-slug", "name": host]]]
-        }
-        let data = html.map { Data($0.utf8) } ?? (try! JSONSerialization.data(withJSONObject: body))
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-    static func reset(failing: String? = nil) {
-        lock.lock(); defer { lock.unlock() }
-        requests = []; failingHost = failing; mediaStatus = 200; mediaType = "video/x-matroska"; mediaGetStatus = 206; mediaGetType = "video/mp4"
-        mediaGetPrefix = Data([0,0,0,24,0x66,0x74,0x79,0x70,0x69,0x73,0x6f,0x6d])
-        coreVideoRows = nil; gatewayStatus = 200; gatewayType = "application/json"
-        gatewayBody = Data(#"{"url":"https://vip.example/resolved.mkv?token=media-fixture"}"#.utf8)
-        gatewayFailure = nil
-        freeMediaURL = nil
-    }
-    static func captured() -> [URLRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return requests
-    }
-
-    static func setCoreVideos(_ rows: [[String: Any]]) {
-        lock.lock(); defer { lock.unlock() }
-        coreVideoRows = rows
-    }
-
-    static func setFreeMediaURL(_ url: String) {
-        lock.lock(); defer { lock.unlock() }
-        freeMediaURL = url
-    }
-
-    static func setGateway(status: Int = 200, type: String = "application/json", body: String,
-                           failure: URLError? = nil) {
-        lock.lock(); defer { lock.unlock() }
-        gatewayStatus = status; gatewayType = type; gatewayBody = Data(body.utf8); gatewayFailure = failure
-    }
-
-    static func setDirectory(_ config: [String: Any], tampered: Bool = false) throws {
-        // Public client configuration envelope, independent of account or CDN
-        // signing credentials. Exercise production authenticated decoding.
-        let key = SymmetricKey(data: Data([206, 51, 195, 123, 77, 239, 26, 201, 30, 27, 136, 218, 57, 173, 133, 211,
-                                          137, 62, 112, 164, 243, 123, 157, 247, 17, 203, 108, 161, 208, 77, 197, 2]))
-        let nonceData = Data(repeating: 7, count: 12)
-        let plaintext = try JSONSerialization.data(withJSONObject: ["data": config])
-        let box = try AES.GCM.seal(plaintext, using: key, nonce: AES.GCM.Nonce(data: nonceData))
-        var encrypted = box.ciphertext + box.tag
-        if tampered { encrypted[encrypted.count - 1] ^= 1 }
-        func encoded(_ value: Data) -> String {
-            value.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        }
-        let data = try JSONSerialization.data(withJSONObject: ["alg": "AES-GCM-256", "encoding": "base64url",
-                                                               "iv": encoded(nonceData), "ciphertext": encoded(encrypted)])
-        lock.lock(); defer { lock.unlock() }
-        directoryEnvelope = data
+        if host == failing { status=503; body=["error":"Unavailable"] }
+        else if host == "kkphim.com" { html=try! String(contentsOfFile:"Tests/Fixtures/kkphim-ongoing.html",encoding:.utf8); body=[:] }
+        else if path == "/the-loai" || path == "/quoc-gia" { body=["items":[["slug":"own-taxonomy","name":"Own category"]]] }
+        else if path.hasPrefix("/phim/") || path.hasPrefix("/api/film/") {
+            body=["movie":["name":host],"episodes":[["server_name":"Vietsub","server_data":[["name":"01","slug":"tap-1","link_m3u8":"https://"+host+"/movie.m3u8","link_embed":"https://"+host+"/advertising-player"]]]]]
+        } else { body=["items":[["slug":"shared-slug","name":host]]] }
+        let data=html.map{Data($0.utf8)} ?? (try! JSONSerialization.data(withJSONObject:body))
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:url,statusCode:status,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didLoad:data); client?.urlProtocolDidFinishLoading(self)
     }
 }
-
-@MainActor
 enum AnimeService { static let userAgent = "AnPinime Provider Tests" }
-
-@main
-struct ProviderTests {
+@main struct ProviderTests {
     @MainActor static func main() async throws {
         try await verifyTransportPolicy()
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [ProviderProtocol.self]
-        let session = URLSession(configuration: config)
-        try await verifyDirectoryMetadata(session: session)
-        try await verifyCoreClientHeaders(session: session)
-        let fixtureAuthorization = "Basic " + Data("fixture-user:fixture-pass".utf8).base64EncodedString()
-        let source2 = Phim4KProvider.Configuration(core: .init(baseURL: URL(string: "https://core.example")!, apiKey: "fixture-key", authorization: fixtureAuthorization), catalogs: [
-            .init(id: "free1", url: URL(string: "https://free1.example")!, format: .free1),
-            .init(id: "free2", url: URL(string: "https://free2.example")!, format: .free2)
-        ], gateway: URL(string: "https://gateway.example")!)
-        let overridden = try Phim4KProvider.applyingCatalogOverride("https://custom-free.example", format: .free1, to: source2)
-        require(overridden.core?.baseURL == source2.core?.baseURL && overridden.catalogs.map(\.id) == ["free1", "free2"], "Manual Free override preserves Core and both original catalog identities")
-        require(overridden.catalogs[0].url.host == "custom-free.example" && overridden.catalogs[1].url.host == "free2.example", "Manual Free override replaces only its selected catalog")
-        require(overridden.gateway == source2.gateway, "Manual Free override preserves the independent premium gateway configuration")
-        let restoredAutomatic = try Phim4KProvider.applyingCatalogOverride("", format: .free1, to: source2)
-        require(restoredAutomatic.catalogs[0].url.host == "free1.example", "Clearing the manual URL restores the original-app Free configuration")
-        do { _ = try Phim4KProvider.applyingCatalogOverride("https://custom-free.example/?token=x", format: .free1, to: source2); fatalError("Expected signed override rejection") } catch {}
-        do { _ = try Phim4KProvider.applyingCatalogOverride("https://animevietsub.news", format: .free1, to: source2); fatalError("Expected anime host rejection") } catch {}
+        let config=URLSessionConfiguration.ephemeral; config.protocolClasses=[ProviderProtocol.self]
+        let session=URLSession(configuration:config)
+        defer { session.invalidateAndCancel() }
         for (source, host, category) in [(ContentSource.film4k, "phim.nguonc.com", "api/films/the-loai/hanh-dong"),
                                          (.kkphim, "phimapi.com", "v1/api/the-loai/hanh-dong")] {
             ProviderProtocol.reset()
@@ -206,251 +64,11 @@ struct ProviderTests {
             do { _ = try await provider.search("fail"); fatalError("Expected source failure") } catch {}
             require(Set(ProviderProtocol.captured().compactMap { $0.url?.host }) == [host], "Failure never switches providers")
         }
-        ProviderProtocol.reset()
-        let app = MovieProvider(source: .phim4k, session: session, source2Configuration: source2)
-        let home = try await app.home()
-        require(home.first?.title == "Phim lẻ mới nhất", "Source 2 starts with Phim4K Core, not Free1/KKPhim")
-        require(home.map(\.title).contains("Phim4K · Free1") && home.map(\.title).contains("Phim4K · Free2"), "All catalogs announced by the app remain separately available")
-        let search = try await app.search("Avatar")
-        require(search.map(\.catalogLabel) == ["Phim4K · VIP/Premium", "Phim4K · Free1", "Phim4K · Free2"], "Search preserves the app's three catalog identities")
-        _ = try await app.list(path: "core/genre/45", page: 2)
-        _ = try await app.list(path: "free1/v1/api/the-loai/hanh-dong")
-        _ = try await app.list(path: "free2/api/films/the-loai/hanh-dong")
-        let detail = try await app.detail(search[0])
-        require(detail.episodes.count == 2, "Source 2 restores both original Core servers")
-        let playback = try await app.resolve(detail.episodes[0])
-        require(playback.url.absoluteString == "https://vip.example/original.mkv", "VIP selection retains the exact Core link")
-        let captured = ProviderProtocol.captured()
-        require(Set(captured.compactMap { $0.url?.host }) == ["core.example", "free1.example", "free2.example", "vip.example"], "Source 2 never directly queries NguonC or KKPhim")
-        require(captured.filter { $0.url?.host != "core.example" }.allSatisfy {
-            $0.value(forHTTPHeaderField: "API-KEY") == nil && $0.value(forHTTPHeaderField: "Authorization") == nil
-        }, "Core API and client Basic headers stay on the exact Core origin")
-        require(captured.filter { $0.url?.host == "core.example" }.allSatisfy {
-            $0.value(forHTTPHeaderField: "API-KEY") == "fixture-key" && $0.value(forHTTPHeaderField: "Authorization") == fixtureAuthorization
-        }, "Core app requests retain their required API and original client Basic headers")
-        require(captured.filter { ["core.example", "free1.example", "free2.example"].contains($0.url?.host ?? "") }.allSatisfy {
-            $0.value(forHTTPHeaderField: "User-Agent") == "Dart/3.12 (dart:io)"
-        }, "Source-2 catalogs use the original Dart client user agent, independently of native media")
-        let freeDetail = try await app.detail(search[1])
-        let freePlayback = try await app.resolve(freeDetail.episodes[0])
-        require(!freePlayback.isWeb && freePlayback.url.host == "stream.example" && freePlayback.url.path == "/api/content/stream/hls", "Free1 uses its actual app HLS endpoint rather than an embed")
-        require(URLComponents(url: freePlayback.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "slug" })?.value == "tap-01", "Free1 preserves the selected server and episode query")
-        require(freePlayback.headers["User-Agent"] == "oxoo" && ["Origin", "Referer", "API-KEY", "Authorization", "Cookie"].allSatisfy { freePlayback.headers[$0] == nil }, "Free playback follows the original app's media headers without Core or website credentials")
-        ProviderProtocol.lock.lock(); ProviderProtocol.mediaStatus = 403; ProviderProtocol.mediaGetStatus = 403; ProviderProtocol.lock.unlock()
-        do { _ = try await app.resolve(detail.episodes[0]); fatalError("Expected auth error") }
-        catch { require(error.localizedDescription.contains("AUTH_REQUIRED"), "VIP 403 surfaces AUTH_REQUIRED without fallback") }
-        ProviderProtocol.lock.lock(); ProviderProtocol.mediaStatus = 200; ProviderProtocol.mediaType = "application/json"; ProviderProtocol.mediaGetStatus = 200; ProviderProtocol.mediaGetType = "application/json"; ProviderProtocol.lock.unlock()
-        do { _ = try await app.resolve(detail.episodes[0]); fatalError("Expected invalid media response") }
-        catch { require(error.localizedDescription.contains("JSON"), "JSON response is not handed to the video decoder") }
-        ProviderProtocol.lock.lock()
-        ProviderProtocol.mediaGetType = "video/mp4"; ProviderProtocol.mediaGetPrefix = Data()
-        ProviderProtocol.lock.unlock()
-        do { _ = try await app.resolve(detail.episodes[0]); fatalError("Expected empty media rejection") }
-        catch { require(error.localizedDescription.contains("định dạng"), "A successful video MIME response with no media bytes is rejected") }
-        ProviderProtocol.reset()
-        ProviderProtocol.lock.lock(); ProviderProtocol.mediaStatus = 405; ProviderProtocol.lock.unlock()
-        let ranged = try await app.resolve(detail.episodes[0])
-        require(ranged.url.absoluteString == "https://vip.example/original.mkv", "A single prefix GET validates the exact media URL even when HEAD is unsupported")
-        let probe = ProviderProtocol.captured().last { $0.httpMethod == "GET" && $0.url?.host == "vip.example" }
-        require(probe?.value(forHTTPHeaderField: "Range") == "bytes=0-2047", "GET probe sends a bounded range")
-        ProviderProtocol.reset()
-        do { _ = try await app.list(path: "v1/api/the-loai/hanh-dong"); fatalError("Expected foreign category rejection") } catch {}
-        let wrongProvider = MovieProvider(source: .kkphim, session: session)
-        do { _ = try await wrongProvider.detail(search[0]); fatalError("Expected identity rejection") } catch {}
-        try await verifyGatewayIntegration(session: session)
-        try await verifyDirectoryReuse(session: session)
-        print("All provider routing regressions passed")
+        print("Public provider regressions passed")
     }
     static func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         guard condition() else { fatalError(message) }
         print("PASS: " + message)
-    }
-
-    @MainActor static func verifyGatewayIntegration(session: URLSession) async throws {
-        let core = URL(string: "https://core.example")!
-        let movie = Anime(title: "Selected premium movie", url: URL(string: "https://core.example/rest-api/v130/single_details?type=movie&id=41")!,
-                          imageURL: nil, episodeText: "", quality: "", score: "", source: .phim4k)
-        let fixtureAuthorization = "Basic " + Data("gateway-test-client:fixture-pass".utf8).base64EncodedString()
-        let configuration = Phim4KProvider.Configuration(core: .init(baseURL: core, apiKey: "fixture-key", authorization: fixtureAuthorization), catalogs: [
-            .init(id: "free1", url: URL(string: "https://free1.example")!, format: .free1)
-        ], gateway: URL(string: "https://gateway.example")!)
-        let provider = MovieProvider(source: .phim4k, session: session, source2Configuration: configuration)
-        let ids = ["31937", "33090", "27463", "31938", "31939"]
-        let rows: [[String: Any]] = ids.enumerated().map { index, id in
-            ["video_file_id": id, "label": "Original premium server " + id, "file_type": "mkv",
-             "file_url": "https://cdn.phim4k.lol/OPAQUE_" + String(index)]
-        }
-        ProviderProtocol.reset()
-        ProviderProtocol.setCoreVideos(rows)
-        let detail = try await provider.detail(movie)
-        func serverID(_ episode: Episode) -> String? {
-            if case .phim4kCore(_, _, let id) = episode.playback { return id }
-            return nil
-        }
-        require(detail.episodes.compactMap(serverID) == ids, "Gateway integration retains every exact Wakanda-style server ID without quality-based deduplication")
-        let selected = detail.episodes.first { serverID($0) == "31937" }!
-        var refreshed = Array(rows.reversed())
-        let index = refreshed.firstIndex { $0["video_file_id"] as? String == "31937" }!
-        refreshed[index]["file_url"] = "https://cdn.phim4k.lol/REFRESHED_HANDLE"
-        ProviderProtocol.setCoreVideos(refreshed)
-        ProviderProtocol.lock.lock(); ProviderProtocol.mediaStatus = 405; ProviderProtocol.lock.unlock()
-        let startupStartedAt = ProcessInfo.processInfo.systemUptime
-        let resolved = try await provider.resolve(selected)
-        let startupElapsed = ProcessInfo.processInfo.systemUptime - startupStartedAt
-        let requests = ProviderProtocol.captured()
-        require(requests.filter { $0.url?.host == "core.example" }.allSatisfy {
-            $0.value(forHTTPHeaderField: "Authorization") == fixtureAuthorization
-        }, "Exact premium detail refresh uses its Core client authorization before gateway exchange")
-        let gateway = requests.first { $0.url?.host == "gateway.example" }!
-        let query = URLComponents(url: gateway.url!, resolvingAgainstBaseURL: false)!.queryItems!
-        require(gateway.url?.lastPathComponent == "REFRESHED_HANDLE" && Set(query.map(\.name)) == ["token", "ts"], "Fresh exact server ID determines the gateway file handle after API reordering and URL refresh")
-        require(query.first { $0.name == "token" }?.value?.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
-                && query.first { $0.name == "ts" }?.value?.range(of: "^[0-9a-f]{8}$", options: .regularExpression) != nil,
-                "Gateway request has the original protocol's token and masked timestamp shapes")
-        require(gateway.httpMethod == "GET" && gateway.value(forHTTPHeaderField: "Range") == nil, "Gateway exchange is a bounded JSON GET, separate from media Range probing")
-        require(resolved.url.absoluteString == "https://vip.example/resolved.mkv?token=media-fixture", "Gateway JSON media URL and its source-supplied query are used exactly")
-        let media = requests.filter { $0.url?.host == "vip.example" }
-        require(media.map(\.httpMethod) == ["GET"] && media.allSatisfy { $0.url == resolved.url }, "Premium validation sends one bounded GET, without a serial HEAD request, to the resolved media URL")
-        require(media.last?.value(forHTTPHeaderField: "Range") == "bytes=0-2047", "Resolved premium media probe stays bounded")
-        let resolveRequests = Array(requests.dropFirst()) // The first request opened the detail page.
-        require(resolveRequests.count == 3, "Exact premium resolution needs only fresh metadata, gateway JSON and one media prefix request")
-        print("SOURCE2_STARTUP_METRIC fixtureResolveRequests=\(resolveRequests.count) mediaProbeRequests=\(media.count) elapsedSeconds=\(startupElapsed)")
-        require(requests.filter { $0.url?.host != "core.example" }.allSatisfy { request in
-            ["API-KEY", "Authorization", "Cookie", "Referer", "Origin"].allSatisfy { request.value(forHTTPHeaderField: $0) == nil }
-        }, "Neither gateway nor premium media requests receive Core, account or website headers")
-        require(resolved.headers["User-Agent"] == "oxoo" && media.allSatisfy { $0.value(forHTTPHeaderField: "User-Agent") == "oxoo" }, "Premium media uses the original app's oxoo user agent")
-        require(!requests.contains { $0.url?.host == "cdn.phim4k.lol" || $0.url?.host == "free1.example" }, "Premium resolution never probes the obsolete virtual host or substitutes Free1")
-
-        ProviderProtocol.reset()
-        ProviderProtocol.setCoreVideos(refreshed)
-        ProviderProtocol.setGateway(body: #"{"url":"https://media-new.example/new.mkv?token=next-fixture"}"#)
-        let movedMedia = try await provider.resolve(selected)
-        require(movedMedia.url.host == "media-new.example" && ProviderProtocol.captured().contains { $0.url?.host == "media-new.example" }, "A fresh gateway response can move the exact selected stream to a new media host")
-
-        ProviderProtocol.reset()
-        ProviderProtocol.setCoreVideos(rows)
-        ProviderProtocol.setGateway(body: #"{"url":"http://vip.example/original-http.model?token=http-fixture"}"#)
-        ProviderProtocol.lock.lock()
-        ProviderProtocol.mediaStatus = 405
-        ProviderProtocol.mediaGetPrefix = Data([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])
-        ProviderProtocol.lock.unlock()
-        let originalHTTP = try await provider.resolve(selected)
-        let httpMedia = ProviderProtocol.captured().filter { $0.url?.host == "vip.example" }
-        require(originalHTTP.url.absoluteString == "http://vip.example/original-http.model?token=http-fixture"
-                && httpMedia.map(\.httpMethod) == ["GET"], "A genuine HTTP media URL returned by the HTTPS gateway is preserved without a guessed HTTPS rewrite")
-        require(httpMedia.allSatisfy { request in request.url?.scheme == "http"
-            && request.value(forHTTPHeaderField: "User-Agent") == "oxoo"
-            && ["API-KEY", "Authorization", "Cookie", "Origin", "Referer"].allSatisfy { request.value(forHTTPHeaderField: $0) == nil }
-        }, "HTTP premium media receives only the original app media headers, never API or session credentials")
-
-        var movedConfiguration = configuration
-        movedConfiguration.gateway = URL(string: "https://gateway-new.example")!
-        let movedProvider = MovieProvider(source: .phim4k, session: session, source2Configuration: movedConfiguration)
-        ProviderProtocol.reset()
-        ProviderProtocol.setCoreVideos(refreshed)
-        _ = try await movedProvider.resolve(selected)
-        require(ProviderProtocol.captured().contains { $0.url?.host == "gateway-new.example" }
-                && !ProviderProtocol.captured().contains { $0.url?.host == "gateway.example" }, "An updated gateway configuration replaces the old host without changing the selected server")
-
-        let rejected: [(Int, String, String)] = [
-            (400, "application/json", #"{"error":"bad request"}"#),
-            (401, "application/json", #"{"error":"unauthorized"}"#),
-            (403, "application/json", #"{"error":"forbidden"}"#),
-            (500, "application/json", #"{"url":"https://vip.example/never.mkv"}"#),
-            (200, "text/html", "<!doctype html><html>Gateway unavailable</html>"),
-            (200, "application/json", #"{"status":true}"#),
-            (200, "application/json", #"{"url":null}"#),
-            (200, "application/json", #"{"url":""}"#),
-            (200, "application/json", #"{"url":"/relative.mkv"}"#),
-            (200, "application/json", #"{"url":"javascript:alert(1)"}"#),
-            (200, "application/json", #"{"url":"file:///movie.mkv"}"#),
-            (200, "application/json", #"{"url":"http://127.0.0.1/movie.mkv"}"#),
-            (200, "application/json", #"{"url":"https://user:password@vip.example/movie.mkv"}"#),
-            (200, "application/json", #"{"url":"https://vip.example/never.mkv"}"# + String(repeating: " ", count: 70_000))
-        ]
-        for (status, type, body) in rejected {
-            ProviderProtocol.reset()
-            ProviderProtocol.setCoreVideos(rows)
-            ProviderProtocol.setGateway(status: status, type: type, body: body)
-            do { _ = try await provider.resolve(selected); fatalError("Expected gateway failure") } catch {}
-            require(ProviderProtocol.captured().contains { $0.url?.host == "gateway.example" }
-                    && ProviderProtocol.captured().allSatisfy { ["core.example", "gateway.example"].contains($0.url?.host ?? "") },
-                    "Rejected gateway status or payload fails before any media, obsolete CDN or Free request")
-            require(ProviderProtocol.captured().filter { $0.url?.host == "gateway.example" }.allSatisfy { $0.httpMethod == "GET" },
-                    "A failed gateway exchange is never handed back as a media URL for HEAD probing")
-        }
-        ProviderProtocol.reset()
-        ProviderProtocol.setCoreVideos(rows)
-        ProviderProtocol.setGateway(body: "", failure: URLError(.timedOut))
-        do { _ = try await provider.resolve(selected); fatalError("Expected gateway timeout") } catch {}
-        require(ProviderProtocol.captured().allSatisfy { ["core.example", "gateway.example"].contains($0.url?.host ?? "") }, "Gateway network failure cannot become a signed gateway URL handed to the player")
-        require(ProviderProtocol.captured().filter { $0.url?.host == "gateway.example" }.allSatisfy { $0.httpMethod == "GET" }, "Gateway timeout remains a resolver failure and is not probed as video")
-
-        ProviderProtocol.reset()
-        ProviderProtocol.setCoreVideos(rows.filter { $0["video_file_id"] as? String != "31937" })
-        do { _ = try await provider.resolve(selected); fatalError("Expected missing selected server") } catch {}
-        require(ProviderProtocol.captured().allSatisfy { $0.url?.host == "core.example" }, "A removed selected ID never resolves another server or another provider")
-        for invalid in ["http://core.example/rest-api/v130/single_details?type=movie&id=41", "https://core.example:8443/rest-api/v130/single_details?type=movie&id=41", "https://core.example.attacker.test/rest-api/v130/single_details?type=movie&id=41"] {
-            ProviderProtocol.reset()
-            let wrong = Anime(title: movie.title, url: URL(string: invalid)!, imageURL: nil, episodeText: "", quality: "", score: "", source: .phim4k)
-            do { _ = try await provider.detail(wrong); fatalError("Expected wrong Core origin rejection") } catch {}
-            require(ProviderProtocol.captured().isEmpty, "Wrong Core scheme, port or lookalike host is rejected before sending credentials")
-        }
-
-        // A Free catalog marks its source before any host-based VIP routing.
-        // Even a virtual-host-shaped link stays Free and is never signed.
-        ProviderProtocol.reset()
-        let free = Anime(title: "Free sample", url: URL(string: "https://free1.example/phim/sample")!, imageURL: nil,
-                         episodeText: "", quality: "", score: "", source: .phim4k, catalogLabel: "Phim4K · Free1")
-        ProviderProtocol.setFreeMediaURL("https://cdn.phim4k.lol/FREE_SOURCE_HANDLE.mkv")
-        let freeDetail = try await provider.detail(free)
-        let freePlayback = try await provider.resolve(freeDetail.episodes[0])
-        require(!freePlayback.isWeb && freePlayback.url.absoluteString == "https://cdn.phim4k.lol/FREE_SOURCE_HANDLE.mkv"
-                && ProviderProtocol.captured().allSatisfy { $0.url?.host == "free1.example" }, "Free-source context bypasses signing even for a virtual-CDN-shaped URL")
-        require(freePlayback.headers["User-Agent"] == "oxoo" && ["API-KEY", "Authorization", "Cookie", "Referer", "Origin"].allSatisfy { freePlayback.headers[$0] == nil }, "Free media uses the original app's user agent without website or premium headers")
-        ProviderProtocol.setFreeMediaURL("https://embed.example/watch/opaque")
-        let webPlayback = try await provider.resolve(freeDetail.episodes[0])
-        require(webPlayback.isWeb && webPlayback.webURL == nil && webPlayback.url.host == "embed.example",
-                "A link-only opaque Free embed retains web-backed playback without an optional embed URL")
-        require(webPlayback.headers["User-Agent"] == AnimeService.userAgent && webPlayback.headers["Referer"] == "https://free1.example/",
-                "Web-backed Free playback retains website headers for its WebKit-to-native handoff")
-        ProviderProtocol.reset()
-    }
-
-    @MainActor static func verifyDirectoryReuse(session: URLSession) async throws {
-        let defaults = UserDefaults.standard
-        let keys = ["AnPinime.source2Directory", "AnPinime.phim4kURL"]
-        let original = keys.map { defaults.object(forKey: $0) }
-        defer {
-            for (index, key) in keys.enumerated() {
-                if let value = original[index] { defaults.set(value, forKey: key) }
-                else { defaults.removeObject(forKey: key) }
-            }
-            ProviderProtocol.reset()
-        }
-        for key in keys { defaults.removeObject(forKey: key) }
-        ProviderProtocol.reset()
-        try ProviderProtocol.setDirectory(["api": "core.example", "cdn": "gateway.example", "tokens": "fixture-key"])
-        ProviderProtocol.setCoreVideos([["video_file_id": "31937", "label": "Selected MKV", "file_type": "mkv",
-                                         "file_url": "https://cdn.phim4k.lol/EXACT_HANDLE"]])
-        let movie = Anime(title: "Directory startup fixture", url: URL(string: "https://core.example/rest-api/v130/single_details?type=movie&id=41")!,
-                          imageURL: nil, episodeText: "", quality: "", score: "", source: .phim4k)
-        let provider = Phim4KProvider(session: session)
-        _ = try await provider.detail(movie)
-        _ = try await provider.resolveCore(detailURL: movie.url, seasonID: nil, episodeID: "31937")
-        _ = try await provider.resolveCore(detailURL: movie.url, seasonID: nil, episodeID: "31937")
-        var captured = ProviderProtocol.captured()
-        require(captured.filter { $0.url?.host == "rip.cryboiz.workers.dev" }.count == 1,
-                "Opening detail and resolving twice reuses the recently authenticated directory instead of three serial bootstraps")
-        require(captured.filter { $0.url?.host == "core.example" }.count == 3
-                && captured.filter { $0.url?.host == "gateway.example" }.count == 2
-                && captured.filter { $0.url?.host == "vip.example" }.count == 2,
-                "Directory reuse never caches the exact Core detail, gateway exchange or selected media validation")
-        provider.invalidate()
-        _ = try await provider.resolveCore(detailURL: movie.url, seasonID: nil, episodeID: "31937")
-        captured = ProviderProtocol.captured()
-        require(captured.filter { $0.url?.host == "rip.cryboiz.workers.dev" }.count == 2,
-                "Explicit source-2 invalidation forces a fresh authenticated directory")
     }
 
     @MainActor static func verifyTransportPolicy() async throws {
@@ -493,9 +111,11 @@ struct ProviderTests {
         process.arguments = ["python3", "-u", "-c", #"""
 import json, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+paths = []
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
+        paths.append(self.path)
         if self.path == '/cross': destination = 'http://127.0.0.1:'+str(second.server_port)+'/headers'
         elif self.path == '/same': destination = '/headers'
         elif self.path.startswith('/loop/'):
@@ -503,6 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         else: destination = None
         values = {k:self.headers.get(k) for k in ['API-KEY','Authorization','Cookie','Range','User-Agent']}
         values['fixturePath'] = self.path
+        if self.path == '/requests': values['loopPaths'] = [p for p in paths if p.startswith('/loop/')]
         body = json.dumps(values).encode()
         self.send_response(302 if destination else 200)
         if destination: self.send_header('Location',destination)
@@ -544,125 +165,18 @@ threading.Event().wait()
         let sameHeaders = try JSONSerialization.jsonObject(with: sameBody) as! [String: Any]
         require((sameResponse as? HTTPURLResponse)?.statusCode == 200 && sameHeaders["API-KEY"] as? String == "fixture-key", "Same-origin Core redirects retain the required client header")
         for iteration in 0..<2 {
-            let (boundedBody, bounded) = try await mediaSession.data(from: root.appendingPathComponent("loop/0"))
-            let actual = try JSONSerialization.jsonObject(with: boundedBody) as! [String: Any]
+            let (_, bounded) = try await mediaSession.data(from: root.appendingPathComponent("loop/0"))
+            // FoundationNetworking may omit a refused 302's body. Verify the
+            // actual server-side requests, independently of that client detail.
+            let (traceBody, _) = try await mediaSession.data(from: root.appendingPathComponent("requests"))
+            let actual = try JSONSerialization.jsonObject(with: traceBody) as! [String: Any]
+            let requests = actual["loopPaths"] as? [String] ?? []
             let status = (bounded as? HTTPURLResponse)?.statusCode ?? 0
             let path = bounded.url?.path ?? "missing"
-            let serverPath = actual["fixturePath"] as? String ?? "missing"
-            require(status == 302 && path == "/loop/2" && serverPath == "/loop/2",
-                    "Redirect count is bounded per task and resets for a new request; iteration=\(iteration), status=\(status), responsePath=\(path), serverPath=\(serverPath)")
+            let current = Array(requests.dropFirst(iteration * 3))
+            require(status == 302 && path == "/loop/2" && current == ["/loop/0", "/loop/1", "/loop/2"],
+                    "Redirect count is bounded per task and resets for a new request; iteration=\(iteration), status=\(status), responsePath=\(path), serverRequests=\(current)")
         }
-    }
-
-    @MainActor static func verifyDirectoryMetadata(session: URLSession) async throws {
-        let suite = "AnPinime.DirectoryMetadataTests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let key = "AnPinime.source2Directory"
-        let original = ["api": "https://core.example", "free1": "https://free1.example", "free2": "https://free2.example", "tokens": "fixture-key"]
-        defaults.set(original, forKey: key)
-        require(MovieSourceDirectory.cdnGateway(defaults: defaults) == nil, "A missing CDN announcement never invents a default gateway")
-        ProviderProtocol.reset()
-        try ProviderProtocol.setDirectory(["cdn": "announced-cdn.example"])
-        let accepted = await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        require(accepted, "A valid authenticated directory reports success for the provider's refresh TTL")
-        require(MovieSourceDirectory.cdnGateway(defaults: defaults)?.absoluteString == "https://announced-cdn.example", "Authenticated directory CDN metadata is normalized to HTTPS")
-        var saved = defaults.dictionary(forKey: key) as! [String: String]
-        require(original.allSatisfy { saved[$0.key] == $0.value }, "Adding a CDN announcement preserves Core, both Free catalogs and their existing API configuration")
-        require(ProviderProtocol.captured().count == 1 && ProviderProtocol.captured().allSatisfy {
-            $0.url?.host == "rip.cryboiz.workers.dev" && $0.value(forHTTPHeaderField: "API-KEY") == nil
-        }, "Reading announced CDN metadata never requests that CDN or forwards Core credentials")
-        try ProviderProtocol.setDirectory(["free1": "new-free.example"])
-        await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        saved = defaults.dictionary(forKey: key) as! [String: String]
-        require(MovieSourceDirectory.cdnGateway(defaults: defaults)?.host == "announced-cdn.example" && saved["free1"] == "https://new-free.example"
-                && saved["api"] == original["api"] && saved["free2"] == original["free2"], "Partial bootstrap updates preserve the last announced CDN and unrelated catalogs")
-        for invalid in ["http://insecure.example", "https://cdn.example/?token=fixture", "https://user:password@cdn.example"] {
-            try ProviderProtocol.setDirectory(["cdn": invalid])
-            await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-            require(MovieSourceDirectory.cdnGateway(defaults: defaults)?.host == "announced-cdn.example", "Invalid CDN metadata cannot erase the last valid announcement")
-        }
-        try ProviderProtocol.setDirectory(["cdn": "unverified-cdn.example"], tampered: true)
-        let rejected = await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        require(!rejected, "An unauthenticated directory cannot extend the provider's successful refresh TTL")
-        require(MovieSourceDirectory.cdnGateway(defaults: defaults)?.host == "announced-cdn.example", "An unauthenticated directory envelope cannot replace CDN metadata")
-        ProviderProtocol.reset()
-    }
-    @MainActor static func verifyCoreClientHeaders(session: URLSession) async throws {
-        let suite = "AnPinime.CoreClientHeadersTests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let cacheKey = "AnPinime.source2Directory"
-        let original = ["api": "https://core.example", "free1": "https://free1.example", "free2": "https://free2.example", "cdn": "https://gateway.example"]
-        defaults.set(original, forKey: cacheKey)
-        let fallback = MovieSourceDirectory.coreAPI(defaults: defaults)
-        let pair = fallback.authorization.flatMap { Data(base64Encoded: String($0.dropFirst(6))) } ?? Data()
-        let digest = SHA256.hash(data: pair).map { String(format: "%02x", $0) }.joined()
-        require(fallback.authorization?.hasPrefix("Basic ") == true && digest == "f8e68e8d44bfb5314974a97f787d017ff6ac9d0046083f28665fcf96f0cef80c", "Production fallback Basic matches the original shipped API-client fingerprint without recording its value")
-        require(MovieSourceDirectory.CoreAPI(baseURL: fallback.baseURL, apiKey: "fixture").authorization == nil, "Explicit fixture Core configurations remain authorization-free unless supplied")
-        let fallbackAuthorization = fallback.authorization
-        let expectedAliasAuthorization = "Basic " + Data("alias-client:alias-password".utf8).base64EncodedString()
-        let mapped: [(Any, String, String?)] = [
-            ("  legacy-plain-key  ", "legacy-plain-key", fallbackAuthorization),
-            (["api_key": " first-key ", "username": " alias-client ", "password": " alias-password "], "first-key", expectedAliasAuthorization),
-            (["apiKey": "second-key", "user": "alias-client", "pass": "alias-password"], "second-key", expectedAliasAuthorization),
-            (["key": "third-key"], "third-key", fallbackAuthorization),
-            (["token": "fourth-key"], "fourth-key", fallbackAuthorization),
-            (#"{"api_key":"","apiKey":"json-key","username":"","user":"alias-client","pass":"alias-password"}"#, "json-key", expectedAliasAuthorization)
-        ]
-        for (input, expectedKey, expectedAuthorization) in mapped {
-            var stored: [String: Any] = original
-            stored["tokens"] = input
-            defaults.set(stored, forKey: cacheKey)
-            let client = MovieSourceDirectory.coreAPI(defaults: defaults)
-            require(client.baseURL.host == "core.example" && client.apiKey == expectedKey && client.authorization == expectedAuthorization,
-                    "Legacy/plain/map/JSON-map Core client configuration preserves traced aliases and original defaults")
-        }
-        var legacyMap: [String: Any] = original
-        legacyMap["tokens"] = ["apiKey": "legacy-map-key", "user": "alias-client", "pass": "alias-password"]
-        defaults.set(legacyMap, forKey: cacheKey)
-        require(MovieSourceDirectory.cdnGateway(defaults: defaults)?.host == "gateway.example"
-                && MovieSourceDirectory.catalogs(defaults: defaults).map(\.url.host) == ["free1.example", "free2.example"],
-                "Map-valued legacy tokens never hide independently cached Free or CDN addresses")
-        try ProviderProtocol.setDirectory(["cdn": "map-cache-gateway.example"])
-        await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        require(MovieSourceDirectory.coreAPI(defaults: defaults).apiKey == "legacy-map-key"
-                && MovieSourceDirectory.coreAPI(defaults: defaults).authorization == expectedAliasAuthorization
-                && MovieSourceDirectory.catalogs(defaults: defaults).map(\.url.host) == ["free1.example", "free2.example"],
-                "A partial refresh preserves map-valued legacy client configuration and unrelated addresses")
-        defaults.set(original, forKey: cacheKey)
-        try ProviderProtocol.setDirectory(["tokens": ["apiKey": "new-client-key", "user": "alias-client", "pass": "alias-password"]])
-        await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        var stored = defaults.dictionary(forKey: cacheKey) as! [String: String]
-        require(stored["tokens"] == "new-client-key" && stored["clientAuthorization"] == expectedAliasAuthorization,
-                "Authenticated map tokens persist as a backward-compatible normalized key and client Basic header")
-        require(original.allSatisfy { stored[$0.key] == $0.value }, "Updating Core client headers preserves Core, Free and gateway addresses")
-        try ProviderProtocol.setDirectory(["cdn": "gateway-new.example"])
-        await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        let partial = MovieSourceDirectory.coreAPI(defaults: defaults)
-        require(partial.apiKey == "new-client-key" && partial.authorization == expectedAliasAuthorization,
-                "Partial directory updates preserve the last normalized Core client headers")
-        let invalid: [Any] = ["", "  ", ["username": "not-a-key"], "{broken-json", ["api_key": "bad\r\nInjected: value"], NSNull(), ["wrong_alias": "ignored"]]
-        for input in invalid {
-            try ProviderProtocol.setDirectory(["tokens": input])
-            await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-            let current = MovieSourceDirectory.coreAPI(defaults: defaults)
-            require(current.apiKey == "new-client-key" && current.authorization == expectedAliasAuthorization,
-                    "Missing or invalid replacement tokens cannot erase valid client headers")
-        }
-        try ProviderProtocol.setDirectory(["tokens": #"{"token":"json-refreshed-key","user":"alias-client","password":"alias-password"}"#])
-        await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        require(MovieSourceDirectory.coreAPI(defaults: defaults).apiKey == "json-refreshed-key" && MovieSourceDirectory.coreAPI(defaults: defaults).authorization == expectedAliasAuthorization,
-                "Authenticated JSON-map tokens follow the same client header normalization")
-        try ProviderProtocol.setDirectory(["tokens": "  fresh-plain-key  "])
-        await MovieSourceDirectory.refresh(session: session, defaults: defaults)
-        stored = defaults.dictionary(forKey: cacheKey) as! [String: String]
-        require(stored["tokens"] == "fresh-plain-key" && stored["clientAuthorization"] == fallbackAuthorization,
-                "A valid plain-key refresh restores the original default API-client Basic pair")
-        require(ProviderProtocol.captured().allSatisfy {
-            $0.url?.host == "rip.cryboiz.workers.dev" && $0.value(forHTTPHeaderField: "API-KEY") == nil && $0.value(forHTTPHeaderField: "Authorization") == nil
-        }, "Directory header normalization never contacts Core/media or sends client credentials to the directory")
-        ProviderProtocol.reset()
     }
 
 }

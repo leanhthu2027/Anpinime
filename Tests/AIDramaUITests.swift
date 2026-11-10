@@ -501,18 +501,19 @@ final class AIDramaUITests: XCTestCase {
         let sourceMenu = app.buttons["movie.source.choose"]
         try waitFor("The movie source chooser is available") { sourceMenu.isHittable }
         sourceMenu.tap()
-        for source in ["film4k", "phim4k", "kkphim"] {
+        for source in ["film4k", "aether", "kkphim"] {
             XCTAssertTrue(app.buttons["movie.source." + source].exists, "Existing source ID remains independently selectable: \(source)")
         }
-        app.buttons["movie.source.phim4k"].tap()
-        try waitFor("The selected movie source is Premium") { sourceMenu.value as? String == "Anpinime Premium" }
+        app.buttons["movie.source.aether"].tap()
+        try waitFor("The selected movie source is Aether") { app.buttons["movie.source.choose"].value as? String == "Aether" }
+        try assertTabs(["Trang chủ", "Cài đặt"])
         try openLibraryChooserFromSettings()
         app.buttons["library.choice.aiDrama"].tap()
         try assertAITabs()
         app.buttons["aidrama.library.choose"].tap()
         app.buttons["library.choice.movie"].tap()
-        try assertTabs(["Trang chủ", "Tìm kiếm", "Thể loại", "Cài đặt"])
-        XCTAssertEqual(app.buttons["movie.source.choose"].value as? String, "Anpinime Premium",
+        try assertTabs(["Trang chủ", "Cài đặt"])
+        XCTAssertEqual(app.buttons["movie.source.choose"].value as? String, "Aether",
                        "Entering AI preserves the user's selected movie provider")
         try openLibraryChooserFromSettings()
         try assertLibraryChoices()

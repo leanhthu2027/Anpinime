@@ -22,7 +22,7 @@ final class AnimeService: ObservableObject {
     var categories: [AnimeCategory] { source.isMovie ? movieCategories : animeCategories }
     var contentName: String { source.isMovie ? "phim" : "anime" }
     private let film4k = MovieProvider(source: .film4k)
-    private let phim4k = MovieProvider(source: .phim4k)
+    private let aether = AetherProvider()
     private let kkphim = MovieProvider(source: .kkphim)
     private struct HomeSnapshot {
         let sections: [AnimeSection]
@@ -74,6 +74,7 @@ final class AnimeService: ObservableObject {
 
     func selectSource(_ value: ContentSource) {
         guard source != value else { return }
+        NotificationCenter.default.post(name: Notification.Name("AnPinime.sourceWillChange"), object: nil)
         homeTask?.cancel()
         homeTask = nil
         let generation = UUID()
@@ -115,11 +116,12 @@ final class AnimeService: ObservableObject {
         await loadHome(forceDomainRefresh: true)
     }
 
-    private func provider(_ source: ContentSource) -> MovieProvider {
+    private func provider(_ source: ContentSource) -> any MovieSourceProviding {
         switch source {
         case .film4k: return film4k
         case .kkphim: return kkphim
-        case .phim4k, .anime: return phim4k
+        case .aether: return aether
+        case .anime: return film4k // Anime HTML never routes through a movie provider.
         }
     }
 
@@ -134,6 +136,7 @@ final class AnimeService: ObservableObject {
     init(session suppliedSession: URLSession? = nil, resolver: DomainResolver = .shared, homeStore: AnimeHomeStore = .shared) {
         self.resolver = resolver
         self.homeStore = homeStore
+        MovieSourceMigration.migrate()
         AnimeSiteConfiguration.migrateMisplacedURL()
         if let custom = AnimeSiteConfiguration.selectedURL() { baseURL = custom }
         let configuration = URLSessionConfiguration.default

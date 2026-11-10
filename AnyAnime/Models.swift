@@ -1,13 +1,13 @@
 import Foundation
 
 enum ContentSource: String, CaseIterable, Identifiable {
-    case anime, film4k, phim4k, kkphim
+    case anime, film4k, aether, kkphim
     var id: String { rawValue }
     var title: String {
         switch self {
         case .anime: return "AnimeVietsub"
         case .film4k: return "Anpinime Free"
-        case .phim4k: return "Anpinime Premium"
+        case .aether: return "Aether"
         case .kkphim: return "Anpinime dự phòng"
         }
     }
@@ -15,11 +15,12 @@ enum ContentSource: String, CaseIterable, Identifiable {
         switch self {
         case .anime: return "Anime"
         case .film4k: return "Anpinime Free"
-        case .phim4k: return "Anpinime Premium"
+        case .aether: return "Aether"
         case .kkphim: return "Anpinime dự phòng"
         }
     }
     var isMovie: Bool { self != .anime }
+    var requiresWebsitePlayback: Bool { self == .aether }
 }
 
 /// Presentation only: provider identifiers, URLs and saved history stay unchanged.
@@ -27,7 +28,6 @@ enum ContentDisplayText {
     static func sourceLabels(_ text: String) -> String {
         [
             ("NguonC", ContentSource.film4k.title),
-            ("Phim4K", ContentSource.phim4k.title),
             ("KKPhim", ContentSource.kkphim.title)
         ].reduce(text) { result, pair in
             result.replacingOccurrences(of: pair.0, with: pair.1, options: .caseInsensitive)
@@ -39,7 +39,6 @@ enum EpisodePlayback: Hashable {
     case animePage
     case film4k(slug: String, season: Int?, episode: Int?, server: Int)
     case catalogEpisode(detailURL: URL, serverName: String, episodeKey: String)
-    case phim4kCore(detailURL: URL, seasonID: String?, episodeID: String)
     case directStream(url: URL, webURL: URL?, isWeb: Bool, referer: URL?)
 }
 
@@ -100,15 +99,7 @@ struct Episode: Identifiable, Hashable {
 
     var id: String { source.rawValue + ":" + url.absoluteString + "|" + season + "|" + title + "|" + qualityBadge }
 
-    /// Keep the raw label in persistence/routing; normalize only source-2 UI text.
-    var displayTitle: String {
-        guard source == .phim4k else { return title }
-        let label = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard label.range(of: #"^S[0-9]+E[0-9]+$"#, options: [.regularExpression, .caseInsensitive]) != nil,
-              let marker = label.range(of: "E", options: .caseInsensitive),
-              let number = Int(label[marker.upperBound...]), number > 0 else { return title }
-        return "Tập \(number)"
-    }
+    var displayTitle: String { title }
 }
 
 struct AnimeDetail: Hashable {
