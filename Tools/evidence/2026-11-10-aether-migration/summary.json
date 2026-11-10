@@ -1,0 +1,121 @@
+{
+  "date": "2026-11-10",
+  "baseline": "ea2f8c0dff3df92d0042fe34380ffa6ad0ae1a85",
+  "branch": "feature/aether-migration-pip-recovery",
+  "testedCodeCommit": "3b659cf590f4662032a1002968a8d010ff33513b",
+  "applicationTree": "ad19d7e116be184dec4c89d5eeb79da0e9a4665c",
+  "version": "2.9.4",
+  "build": "23",
+  "tools": {
+    "swiftImage": "swift:6.0.3-jammy@sha256:95f6ef898992dc840b35517e780f6f6db9661432775ab0b33cc0a531ea749bdb",
+    "swiftContainerNetwork": "none",
+    "node": "24.22.1",
+    "jsdom": "26.1.0",
+    "python": "3"
+  },
+  "checks": {
+    "aetherDomain": {
+      "status": "PASS",
+      "checks": 35,
+      "scope": "production resolver and redirect guard, synthetic URLSession and directory fixtures"
+    },
+    "aetherMigrationAndSwiftBridge": {
+      "status": "PASS",
+      "checks": 30
+    },
+    "nativePiPPolicy": {
+      "status": "PASS",
+      "checks": 56,
+      "scope": "state, restore, frame gate and concurrency; no AVKit system window"
+    },
+    "parserAndSharedCatalog": {
+      "status": "PASS",
+      "checks": 117
+    },
+    "publicProvidersAndTransport": {
+      "status": "PASS",
+      "checks": 37,
+      "scope": "URLSession mocks plus actual loopback HTTP redirects"
+    },
+    "animeHome": {
+      "status": "PASS",
+      "checks": 26
+    },
+    "pineDramaProvider": {
+      "status": "PASS",
+      "checks": 143
+    },
+    "aiMediaCache": {
+      "status": "PASS",
+      "checks": 18,
+      "serverVerification": "PASS: ten complete MP4 byte transfers; bounded oversized request",
+      "scope": "host FFmpeg generation plus unmodified production cache/test sources and fixture harness in Swift container"
+    },
+    "existingPlayerJS": {
+      "status": "PASS",
+      "groups": 9
+    },
+    "aetherObserverJS": {
+      "status": "PASS",
+      "scope": "synthetic DOM, original translation action, no handoff, iframe/session ownership, PiP rejection and removed video"
+    },
+    "rangeProbe": {
+      "status": "PASS",
+      "paths": [
+        "206",
+        "200",
+        "redirect",
+        "403",
+        "JSON"
+      ]
+    },
+    "virtualRange": {
+      "status": "PASS",
+      "requests": 9
+    },
+    "sharedHLSFixture": {
+      "status": "PASS",
+      "scope": "python3 Tests/relay_fixture_test.py; actual catalog/detail, PID, required headers and MPEG-TS bytes"
+    },
+    "protectedSources": {
+      "status": "PASS",
+      "files": 27,
+      "appLibraryEnumUnchanged": true
+    },
+    "swiftAppSyntax": "PASS",
+    "manualOnlyWorkflowAndShellPythonSyntax": "PASS",
+    "diffCheck": "PASS",
+    "unresolvedLocalFailures": []
+  },
+  "external": {
+    "aetherLive": "BLOCKED: proxy CONNECT 403 for Rentry and aether.st",
+    "catalogAPIContract": "UNVERIFIED",
+    "mediaRoutes": "UNVERIFIED",
+    "subtitleTranslationOnAether": "UNVERIFIED",
+    "networkDraftPersistence": "UNCONFIRMED: INVALID_ARGUMENT"
+  },
+  "apple": {
+    "sdkTypecheck": "SKIP: no Apple SDK",
+    "ipaBuild": "NOT_RUN",
+    "actionsDispatched": 0,
+    "simulatorRuntime": "SKIP",
+    "storeAndUITests": "SKIP: SwiftUI/Combine/UIKit runtime required",
+    "physicalPiP": "NEEDS_PHYSICAL_IPHONE_TEST"
+  },
+  "pstreamReference": {
+    "repository": "p-stream/p-stream",
+    "commit": "b3a2f72aa4dde43ea68b969791fb302de10e9021",
+    "scope": "read-only comparison, not proof of Aether implementation"
+  },
+  "logs": {
+    "ai-cache-tests.log": {
+      "sha256": "b1f4bf7ec6b18323e5d68b7808f4fa4e765a16e9b3add563fe19d65e0dc555c3"
+    },
+    "local-regressions.log": {
+      "sha256": "a6cc86a5d10dc67c61baa3da108c5ab05ca02843733f67f78deacdda95a71bdd"
+    },
+    "protected-sources.json": {
+      "sha256": "51101c57562d1d837dd9e9cfd7c44ca6c68f336e7a072c806accac4e9af9448f"
+    }
+  }
+}
