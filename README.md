@@ -1,6 +1,6 @@
 # AnPinime (iOS 15+)
 
-**Nguồn 2: Anpinime VIP với giao diện native.** Xem [thay đổi và kết quả kiểm thử](ANPINIME_VIP_NATIVE_REPORT.md). IPA 2.9.4 (24) là bản web MVP cũ, không chứa các sửa đổi này; nhánh hiện tại chưa build IPA.
+**[Tải IPA Anpinime VIP native 2.9.4 (25)](ANPINIME_VIP_IPA_BUILD_25.md)** — build và kiểm tra gói thành công; PiP và Aether live cần test trên iPhone. Xem [thay đổi và kết quả kiểm thử](ANPINIME_VIP_NATIVE_REPORT.md). IPA 2.9.4 (24) là bản web MVP cũ.
 
 Ứng dụng gồm ba thư viện **Anime**, **Phim**, **Phim AI**. Chạm logo ở trang chủ để chọn lại thư viện. Trong Phim, menu nguồn gồm **Anpinime Free (NguonC)**, **Anpinime VIP (Aether)** và **Anpinime dự phòng (KKPhim)**. Dữ liệu của các nguồn không bị trộn chung.
 

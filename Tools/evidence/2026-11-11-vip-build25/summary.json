@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "62721a303d910308737c7b02fde22fdc0218ae62",
+  "applicationTree": "8cf2246034987801e1fcf8eca2ca613891a6a39c",
+  "version": "2.9.4",
+  "build": "25",
+  "artifactURL": "https://github.com/pythonltn2000/Anpinime/actions/runs/42954536411/artifacts/13827010297",
+  "buildURL": "https://github.com/pythonltn2000/Anpinime/actions/runs/42954536411",
+  "macOSJobs": 1,
+  "macOSSeconds": 124,
+  "buildRetries": 0,
+  "verificationLocation": "Artifact downloaded and inspected in GitHub Linux helper; receipts checked locally through Git",
+  "independentPackageVerification": true,
+  "physicalIPhonePiPVerified": false,
+  "liveAetherVerified": false
+}

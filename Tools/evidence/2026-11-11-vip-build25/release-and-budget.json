@@ -1,0 +1,99 @@
+{
+  "repository": "pythonltn2000/Anpinime",
+  "sourceCommit": "62721a303d910308737c7b02fde22fdc0218ae62",
+  "applicationTree": "8cf2246034987801e1fcf8eca2ca613891a6a39c",
+  "sourceBranch": "feature/anpinime-vip-native-aether",
+  "version": "2.9.4",
+  "build": "25",
+  "workflow": "build-ipa-light.yml",
+  "phase": "verified",
+  "updatedAt": "2026-11-11T03:45:27.822Z",
+  "helper": {
+    "branch": "automation/ipa-vip-20261111",
+    "runID": 42954524813,
+    "url": "https://github.com/pythonltn2000/Anpinime/actions/runs/42954524813",
+    "scriptElapsedSeconds": 165.81
+  },
+  "budget": {
+    "macOSJobsRequested": 1,
+    "maxMacOSMinutes": 20,
+    "simulatorJobs": 0,
+    "fullSuiteJobs": 0,
+    "buildRetries": 0
+  },
+  "observed": [
+    {
+      "at": "2026-11-11T03:43:19.230Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-11T03:43:50.606Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-11T03:44:21.887Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-11T03:44:53.234Z",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "at": "2026-11-11T03:45:24.566Z",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "buildRun": {
+    "id": 42954536411,
+    "url": "https://github.com/pythonltn2000/Anpinime/actions/runs/42954536411",
+    "headSHA": "62721a303d910308737c7b02fde22fdc0218ae62",
+    "event": "workflow_dispatch",
+    "status": "completed",
+    "conclusion": "success",
+    "runAttempt": 1,
+    "createdAt": "2026-11-11T03:42:44Z",
+    "updatedAt": "2026-11-11T03:44:53Z"
+  },
+  "jobs": [
+    {
+      "id": 130306397510,
+      "name": "build",
+      "conclusion": "success",
+      "startedAt": "2026-11-11T03:42:48Z",
+      "completedAt": "2026-11-11T03:44:52Z",
+      "elapsedSeconds": 124
+    }
+  ],
+  "artifact": {
+    "id": 13827010297,
+    "name": "AnPinime_UNSIGNED",
+    "bytes": 30715926,
+    "digest": "sha256:b7eaeb100de2f8d74380313551679d4b54bd64a87cb161b7a204bf2f40943d58",
+    "expiresAt": "2026-11-14T03:44:47Z",
+    "url": "https://github.com/pythonltn2000/Anpinime/actions/runs/42954536411/artifacts/13827010297"
+  },
+  "packageIdentity": {
+    "sourceCommit": "62721a303d910308737c7b02fde22fdc0218ae62",
+    "applicationTree": "8cf2246034987801e1fcf8eca2ca613891a6a39c",
+    "version": "2.9.4",
+    "build": "25",
+    "bundleID": "com.xemphim.aipinime",
+    "ipaSHA256": "072b8cfe1a27eee9c21227d3a7d4e328741416e56365bcdc55148ea94ebfadb8",
+    "unsigned": true,
+    "validation": "Compilation and package identity only",
+    "playbackVerifiedByThisWorkflow": false,
+    "physicalIPhoneAutomaticPiPVerifiedByThisWorkflow": false,
+    "artifactZipSHA256": "b7eaeb100de2f8d74380313551679d4b54bd64a87cb161b7a204bf2f40943d58",
+    "ipaBytes": 30772619,
+    "minimumOS": "15.0",
+    "backgroundModes": [
+      "audio"
+    ],
+    "independentPackageVerification": true
+  }
+}

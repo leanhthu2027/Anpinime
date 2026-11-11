@@ -5,6 +5,10 @@ Nhánh: `feature/anpinime-vip-native-aether`, tiếp nối mã đã sửa ở `0
 so với main chỉ đổi mục nguồn Phim4K thành Anpinime VIP. Không sửa trực tiếp main.
 IPA build 24 là web MVP cũ và **không chứa bản sửa này**.
 
+> Cập nhật build: **[IPA 2.9.4 (25) đã build và kiểm tra gói](ANPINIME_VIP_IPA_BUILD_25.md)**,
+> source `62721a3`. Một job macOS 124 giây; không retry/Simulator/full suite.
+> Các kiểm thử offline bên dưới chạy trước build. PiP iPhone và Aether live vẫn chưa xác nhận.
+
 ## Hành vi hiện tại
 
 - Nguồn 2 hiển thị **Anpinime VIP**. Home, tìm kiếm, thể loại, banner, poster,
@@ -78,10 +82,12 @@ bằng chứng Aether trực tiếp hoặc PiP iPhone hoạt động. Log local 
 `/workspace/.anpinime-tools/vip-native-regressions.log` và
 `vip-final-ownership-checks.log`.
 
-Môi trường Linux không có Apple SDK/Xcode/Simulator. Chưa chạy iOS typecheck,
-build IPA hoặc GitHub Actions cho nhánh này. Proxy hiện chặn Aether, rentry
-và TMDB; không có TMDB credential được cấu hình. Đường dẫn phát đối chiếu
-Streambert chưa được xác nhận với máy chủ đang hoạt động.
+Môi trường Linux không có Apple SDK/Xcode/Simulator. Sau khi người dùng yêu cầu,
+workflow nhẹ đã biên dịch/liên kết Release bằng Xcode và đóng gói IPA build 25
+thành công. Không chạy Simulator, XCTest UI, playback hay PiP trên iPhone.
+Proxy workspace hiện chặn Aether, rentry và TMDB; không có TMDB credential được
+cấu hình. Đường dẫn phát đối chiếu Streambert chưa được xác nhận với máy chủ
+đang hoạt động.
 
 Trên iPhone cần kiểm tra:
 
