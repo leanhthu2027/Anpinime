@@ -43,18 +43,6 @@ struct PlayerSettingsPanel: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if playback.websiteControlsAvailable {
-                        Button {
-                            playback.send("websiteControls", 1)
-                            close()
-                        } label: {
-                            Label("Máy chủ, chất lượng và dịch phụ đề", systemImage: "slider.horizontal.3")
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("player.website-controls")
-                        Text("Track được video cung cấp sẽ hiện bên dưới. Các lựa chọn riêng của Anpinime VIP mở ngay trong trình phát, gồm phụ đề OpenSubtitles và dịch sang tiếng Việt khi có.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
                     content
                 }
                     .frame(maxWidth: .infinity, alignment: .leading).padding(18)
@@ -88,17 +76,21 @@ struct PlayerSettingsPanel: View {
             heading("Âm thanh")
             trackList(playback.audioTracks, kind: "audio", selected: playback.audioTrack)
             Text("Âm lượng").font(.subheadline)
-            if !playback.websiteControlsAvailable {
-                Slider(value: $playback.volume, in: 0...1).onChange(of: playback.volume) { playback.send("volume", $0) }
-            }
+            Slider(value: $playback.volume, in: 0...1).onChange(of: playback.volume) { playback.send("volume", $0) }
             SystemVolumeSlider().frame(height: 30)
         case "subtitles":
-            subtitleLane("Phụ đề chính", kind: "subtitles", selected: playback.subtitleTrack)
+            subtitleLane("Phụ đề chính", kind: "subtitles", selected: playback.selectedSubtitle)
+            if playback.canTranslateSubtitle {
+                Button { playback.translateSubtitle?() } label: { Label("Dịch sang tiếng Việt", systemImage: "character.bubble") }
+                    .buttonStyle(.bordered).disabled(playback.subtitleBusy)
+            }
+            if let status = playback.subtitleStatus { Text(status).font(.footnote).foregroundStyle(.secondary) }
+            if playback.subtitleBusy { ProgressView().tint(.white) }
             Divider()
             if playback.supportsAdvancedSubtitles {
-                subtitleLane("Phụ đề phụ", kind: "secondarySubtitles", selected: playback.secondarySubtitleTrack)
+                subtitleLane("Phụ đề phụ", kind: "secondarySubtitles", selected: playback.selectedSecondarySubtitle)
             } else {
-                Text("Phụ đề kép và file rời dùng cho luồng phát trực tiếp. Trình phát của trang chỉ hỗ trợ phụ đề chính.").font(.footnote).foregroundStyle(.secondary)
+                Text("Video hiện tại chỉ hỗ trợ một phụ đề.").font(.footnote).foregroundStyle(.secondary)
             }
             if let importError { Text(ContentDisplayText.sourceLabels(importError)).font(.footnote).foregroundColor(.orange) }
             Text("Phụ đề phụ hiển thị phía trên. Chữ đã ghép vào hình không thể tắt.").font(.caption).foregroundStyle(.secondary)
@@ -112,29 +104,24 @@ struct PlayerSettingsPanel: View {
             }
             Toggle("Lấp đầy màn hình", isOn: $playback.fill).onChange(of: playback.fill) { playback.send("fit", $0 ? 1 : 0) }
             Divider()
-            if playback.websiteControlsAvailable {
-                Text("Kiểu chữ, vị trí và bản dịch của phụ đề được giữ trong bảng điều khiển trình phát.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            } else {
-                heading("Hiển thị phụ đề")
-                Picker("Phông chữ", selection: $playback.subtitleStyle.font) {
-                    ForEach(["Arial", "Helvetica", "Times New Roman", "Menlo"], id: \.self) { Text($0).tag($0) }
-                }.pickerStyle(.menu)
-                labeledSlider("Cỡ chữ", value: $playback.subtitleStyle.size, range: 18...80, unit: "")
-                labeledSlider("Khoảng cách tới mép", value: $playback.subtitleStyle.margin, range: 0...150, unit: "")
-                Picker("Căn chỉnh", selection: $playback.subtitleStyle.alignment) {
-                    Text("Trái").tag("left"); Text("Giữa").tag("center"); Text("Phải").tag("right")
-                }.pickerStyle(.segmented)
-                ColorPicker("Màu chữ", selection: color(\SubtitleStyle.foreground), supportsOpacity: true)
-                ColorPicker("Màu nền", selection: color(\SubtitleStyle.background), supportsOpacity: true)
-                ColorPicker("Màu viền", selection: color(\SubtitleStyle.outline), supportsOpacity: true)
-                if playback.supportsAdvancedSubtitles {
-                labeledSlider("Độ trễ phụ đề chính", value: $playback.subtitleStyle.delay, range: -10...10, unit: "s", step: 0.1)
-                labeledSlider("Độ trễ phụ đề phụ", value: $playback.subtitleStyle.secondaryDelay, range: -10...10, unit: "s", step: 0.1)
-                }
-                Text("Phụ đề ảnh (PGS/VobSub) giữ kiểu chữ của video.").font(.caption).foregroundStyle(.secondary)
-                Button("Khôi phục hiển thị mặc định") { playback.subtitleStyle = SubtitleStyle() }
+            heading("Hiển thị phụ đề")
+            Picker("Phông chữ", selection: $playback.subtitleStyle.font) {
+                ForEach(["Arial", "Helvetica", "Times New Roman", "Menlo"], id: \.self) { Text($0).tag($0) }
+            }.pickerStyle(.menu)
+            labeledSlider("Cỡ chữ", value: $playback.subtitleStyle.size, range: 18...80, unit: "")
+            labeledSlider("Khoảng cách tới mép", value: $playback.subtitleStyle.margin, range: 0...150, unit: "")
+            Picker("Căn chỉnh", selection: $playback.subtitleStyle.alignment) {
+                Text("Trái").tag("left"); Text("Giữa").tag("center"); Text("Phải").tag("right")
+            }.pickerStyle(.segmented)
+            ColorPicker("Màu chữ", selection: color(\SubtitleStyle.foreground), supportsOpacity: true)
+            ColorPicker("Màu nền", selection: color(\SubtitleStyle.background), supportsOpacity: true)
+            ColorPicker("Màu viền", selection: color(\SubtitleStyle.outline), supportsOpacity: true)
+            if playback.supportsAdvancedSubtitles {
+            labeledSlider("Độ trễ phụ đề chính", value: $playback.subtitleStyle.delay, range: -10...10, unit: "s", step: 0.1)
+            labeledSlider("Độ trễ phụ đề phụ", value: $playback.subtitleStyle.secondaryDelay, range: -10...10, unit: "s", step: 0.1)
             }
+            Text("Phụ đề ảnh (PGS/VobSub) giữ kiểu chữ của video.").font(.caption).foregroundStyle(.secondary)
+            Button("Khôi phục hiển thị mặc định") { playback.subtitleStyle = SubtitleStyle() }
         case "speed":
             heading("Tốc độ phát · " + String(format: "%g×", playback.rate))
             Slider(value: $playback.rate, in: 0.25...3, step: 0.05).onChange(of: playback.rate) { savedRate = $0; playback.send("rate", $0) }
@@ -148,11 +135,12 @@ struct PlayerSettingsPanel: View {
         case "general":
             heading("Chung")
             Toggle("Tự phát tập tiếp theo", isOn: $autoNext)
-            if playback.websiteControlsAvailable {
-                Text("Mở PiP bằng nút cửa sổ nổi trước khi rời ứng dụng. Khả năng PiP phụ thuộc video và iOS.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            } else {
-                Toggle("PiP khi rời ứng dụng", isOn: $automaticPiP)
+            Toggle("PiP khi rời ứng dụng", isOn: $automaticPiP)
+            if !playback.servers.isEmpty {
+                heading("Máy chủ")
+                trackList(playback.servers, kind: "server", selected: playback.server)
+                heading("Chất lượng")
+                trackList(playback.qualities.map { .init(id: $0.id, title: $0.title) }, kind: "quality", selected: playback.quality)
             }
             if playback.pictureInPictureSupported {
                 Button { playback.send("pip"); close() } label: { Label("Mở cửa sổ nổi", systemImage: "pip.enter") }
@@ -167,23 +155,21 @@ struct PlayerSettingsPanel: View {
             info("Trình phát", playback.engine)
             info("Định dạng", playback.mediaInfo.isEmpty ? "Đang đọc thông tin video…" : playback.mediaInfo)
             info("Âm thanh", "\(playback.audioTracks.count) track")
-            info("Phụ đề", "\(playback.subtitleTracks.filter { $0.id != "off" }.count) track")
+            info("Phụ đề", "\(playback.availableSubtitles.filter { $0.id != "off" }.count) track")
             info("Thời lượng", "\(Int(playback.duration / 60)) phút")
         }
     }
     private func subtitleLane(_ name: String, kind: String, selected: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             heading(name)
-            trackList(playback.subtitleTracks, kind: kind, selected: selected)
-            if !playback.websiteControlsAvailable {
-                Button { importSlot = kind; importing = true } label: { Label("Chọn file trên điện thoại", systemImage: "folder") }
-                    .disabled(!playback.supportsAdvancedSubtitles)
-            }
+            trackList(playback.availableSubtitles, kind: kind, selected: selected)
+            Button { importSlot = kind; importing = true } label: { Label("Chọn file trên điện thoại", systemImage: "folder") }
+                .disabled(!playback.supportsAdvancedSubtitles)
         }
     }
     private func trackList(_ tracks: [PlaybackChoice], kind: String, selected: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            if tracks.isEmpty { Text(playback.loading ? "Đang đọc track…" : playback.websiteControlsAvailable ? "Mở bảng điều khiển trình phát để chọn các track chưa được video cung cấp." : "Video không có track này.").font(.footnote).foregroundStyle(.secondary) }
+            if tracks.isEmpty { Text(playback.loading ? "Đang đọc track…" : "Video không có track này.").font(.footnote).foregroundStyle(.secondary) }
             ForEach(tracks) { track in
                 Button { playback.chooseOption?(kind, track.id) } label: {
                     HStack(spacing: 9) {

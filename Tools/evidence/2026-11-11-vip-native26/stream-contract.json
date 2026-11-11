@@ -1,0 +1,59 @@
+{
+  "checked_at_utc": "2026-11-11T07:12:09.964898+00:00",
+  "source": "https://aether.st/",
+  "provider_bundle": "https://cdn.jsdelivr.net/gh/elusvian/aether-release@main/assets/vendor-BbJGwvp8.js",
+  "provider_bundle_sha256": "871ddcf6ba3ce9fc8a7bf259620d7d10b882a51c09bf6b0a87d178a9b40ac717",
+  "provider_id": "vidlink",
+  "provider_name": "KingLink 🔥",
+  "native_token_vectors": 3,
+  "offline_checks": 33,
+  "cases": [
+    {
+      "media_type": "movie",
+      "tmdb_id": 550,
+      "season": null,
+      "episode": null,
+      "native_api_http_status": 200,
+      "type": "file",
+      "qualities": [
+        "360",
+        "480",
+        "720"
+      ],
+      "caption_count": 15,
+      "media_probe": {
+        "method": "GET",
+        "range": "bytes=0-1023",
+        "http_status": 206,
+        "bytes": 1024,
+        "magic": "ftyp/isom"
+      }
+    },
+    {
+      "media_type": "tv",
+      "tmdb_id": 1399,
+      "season": 1,
+      "episode": 1,
+      "native_api_http_status": 200,
+      "type": "file",
+      "qualities": [
+        "360",
+        "480",
+        "720",
+        "1080"
+      ],
+      "caption_count": 13,
+      "media_probe": {
+        "method": "GET",
+        "range": "bytes=0-1023",
+        "http_status": 206,
+        "bytes": 1024,
+        "magic": "ftyp/isom"
+      }
+    }
+  ],
+  "limits": [
+    "Only KingLink direct stream contract was verified; other live Aether provider API hosts returned Cloudflare HTTP403.",
+    "Range checks establish real MP4 media bytes, not iPhone rendering, codec capability, subtitle timing, or PiP behavior."
+  ]
+}

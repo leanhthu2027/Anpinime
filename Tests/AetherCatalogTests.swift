@@ -69,7 +69,10 @@ private final class CatalogProtocol: URLProtocol {
         var suppliedCredential: String? = "fixture-read-token"
         var suppliedLanguage = "vi-VN"
         let provider = AetherProvider(session: session, credential: { suppliedCredential }, language: { suppliedLanguage },
-            resolveDomain: { _ in URL(string: "https://aether.cx/")! })
+            resolveStream: { type, id, season, episode in
+                let path = type == "movie" ? "movie/\(id)" : "tv/\(id)/\(season!)/\(episode!)"
+                return ResolvedPlayback(url: URL(string: "https://media.example/" + path + ".mp4")!, headers: [:], webURL: nil, isWeb: false)
+            })
         var firstContent: [AnimeSection] = []
         let home = try await provider.home { firstContent = $0 }
         check(firstContent.count == 1 && firstContent[0].title == "Thịnh hành", "native first content publishes before optional home rows")
@@ -99,19 +102,19 @@ private final class CatalogProtocol: URLProtocol {
         let movie = try await provider.detail(search.first { AetherCatalog.identity($0.url)?.type == "movie" }!)
         check(movie.episodes.count == 1, "movie detail exposes one native play entry")
         let moviePlayback = try await provider.resolve(movie.episodes[0])
-        check(moviePlayback.url.absoluteString == "https://aether.cx/media/tmdb-movie-41" && moviePlayback.isWeb && moviePlayback.headers.isEmpty, "movie resolves the referenced Aether route without metadata credentials or native handoff")
+        check(moviePlayback.url.absoluteString == "https://media.example/movie/41.mp4" && !moviePlayback.isWeb && moviePlayback.webURL == nil && moviePlayback.headers.isEmpty, "movie resolves direct native media without a website or metadata credential")
         let tvItem = search.first { AetherCatalog.identity($0.url)?.type == "tv" }!
         let television = try await provider.detail(tvItem)
         check(television.episodes.map(\.season) == ["Ngoại truyện", "Phần 1", "Phần 1", "Phần 2", "Phần 2"] && television.episodes.map(\.number) == [1, 1, 2, 1, 2], "TV loads all nonempty seasons including specials, with numeric episode ordering")
         let secondSeason = television.episodes[3]
         let tvPlayback = try await provider.resolve(secondSeason)
-        check(tvPlayback.url.absoluteString == "https://aether.cx/media/tmdb-tv-41/2/1", "TV playback uses the selected original season and episode numbers")
+        check(tvPlayback.url.absoluteString == "https://media.example/tv/41/2/1.mp4" && !tvPlayback.isWeb, "native TV stream receives the selected original season and episode numbers")
         let ids = television.episodes.map(\.id)
-        let otherMirror = AetherProvider(session: session, credential: { "fixture-read-token" }, resolveDomain: { _ in URL(string: "https://aether.st/")! })
+        let otherMirror = AetherProvider(session: session, credential: { "fixture-read-token" }, resolveStream: { _, _, _, _ in ResolvedPlayback(url: URL(string: "https://other-media.example/stream.m3u8")!, headers: [:], webURL: nil, isWeb: false) })
         let mirrorDetail = try await otherMirror.detail(tvItem)
         check(mirrorDetail.episodes.map(\.id) == ids, "domain recovery cannot rewrite episode/history IDs")
         let otherPlayback = try await otherMirror.resolve(secondSeason)
-        check(otherPlayback.url.host == "aether.st", "only resolved playback origin changes across mirrors")
+        check(otherPlayback.url.host == "other-media.example" && !otherPlayback.isWeb, "media host changes never rewrite native catalog/history IDs")
         let beforeLanguage = CatalogProtocol.captured.count
         suppliedLanguage = "en-US"; _ = try await provider.search("Phim & dấu tiếng Việt")
         check(CatalogProtocol.captured.count == beforeLanguage + 1, "metadata language changes invalidate old cache")

@@ -12,9 +12,15 @@ trap 'rm -rf "$ANPINIME_AETHER_TEMP"' EXIT
 "$ANPINIME_AETHER_TEMP/integration"
 "$ANPINIME_SWIFTC" AnyAnime/Models.swift AnyAnime/MovieSourceProviding.swift \
   AnyAnime/Aether/AetherDomainResolver.swift AnyAnime/Aether/AetherMetadataSettings.swift \
-  AnyAnime/Aether/AetherCatalog.swift AnyAnime/Aether/AetherProvider.swift \
+  AnyAnime/Aether/AetherCatalog.swift AnyAnime/Aether/AetherStreams.swift AnyAnime/Aether/AetherProvider.swift \
   Tests/AetherCatalogTests.swift -o "$ANPINIME_AETHER_TEMP/catalog"
 "$ANPINIME_AETHER_TEMP/catalog"
 "$ANPINIME_SWIFTC" AnyAnime/Aether/AetherMetadataSettings.swift Tests/MetadataCredentialTests.swift -o "$ANPINIME_AETHER_TEMP/credentials"
 "$ANPINIME_AETHER_TEMP/credentials"
 python3 Tests/metadata_credentials_test.py
+python3 Tests/metadata_handoff_test.py
+
+"$ANPINIME_SWIFTC" AnyAnime/Aether/AetherStreams.swift Tests/AetherStreamTests.swift -o "$ANPINIME_AETHER_TEMP/streams"
+"$ANPINIME_AETHER_TEMP/streams"
+"$ANPINIME_SWIFTC" AnyAnime/Aether/AetherSubtitles.swift Tests/AetherSubtitlesTests.swift -o "$ANPINIME_AETHER_TEMP/subtitles"
+"$ANPINIME_AETHER_TEMP/subtitles"

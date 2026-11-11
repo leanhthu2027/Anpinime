@@ -94,11 +94,6 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        guard !episode.source.requiresWebsitePlayback else {
-            playback.loading = false
-            playback.error = AetherCatalogError.invalidRoute.localizedDescription
-            return // Aether never installs this controller's Anime/embed scripts.
-        }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         loadingLabel.text = "Đang tải thông tin video…"
@@ -573,7 +568,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     }
 
     private func showNativePlayer(url: URL, referer: URL? = nil) {
-        guard !episode.source.requiresWebsitePlayback, active, playerController == nil, mpvController == nil,
+        guard active, playerController == nil, mpvController == nil,
               !playback.pictureInPictureActive, !playback.pictureInPicturePending else { return }
         resetWebPictureInPicture()
         fallbackTimer?.invalidate()

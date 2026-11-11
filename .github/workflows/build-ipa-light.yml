@@ -19,10 +19,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Prepare private metadata configuration
+        id: metadata
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
-        run: python3 Tools/prepare-metadata-credentials.py
+        run: |
+          set -euo pipefail
+          if [[ -n "${TMDB_API_KEY:-}" || -n "${TMDB_READ_TOKEN:-}" ]]; then
+            python3 Tools/prepare-metadata-credentials.py
+            echo 'handoff=false' >> "$GITHUB_OUTPUT"
+          else
+            python3 Tools/metadata-credential-handoff.py create
+          fi
+      - name: Publish ephemeral public metadata challenge
+        if: steps.metadata.outputs.handoff == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact }}
+          path: ${{ runner.temp }}/anpinime-metadata-handoff/public/request.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Receive encrypted metadata for this run
+        if: steps.metadata.outputs.handoff == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 Tools/metadata-credential-handoff.py receive
+      - name: Remove ephemeral metadata key
+        if: always()
+        run: python3 Tools/metadata-credential-handoff.py cleanup
       - name: Install XcodeGen and generate project
         run: |
           set -euo pipefail
@@ -57,6 +81,10 @@ jobs:
               assert 'audio' in built.get('UIBackgroundModes', []), 'Missing background audio mode'
               assert any('libmpv' in name.lower() for name in names), 'Missing mpv framework'
               assert not any(name.startswith(root + '_CodeSignature/') or name == root + 'embedded.mobileprovision' for name in names), 'Expected unsigned app'
+              metadata_resources = [name for name in names if name.startswith(root) and name.endswith('/MetadataCredentials.plist')]
+              assert len(metadata_resources) == 1, 'Missing or duplicate private metadata resource'
+              metadata = plistlib.loads(archive.read(metadata_resources[0]))
+              assert any(isinstance(metadata.get(key), str) and metadata[key] for key in ('TMDB_API_KEY', 'TMDB_READ_TOKEN')), 'Missing default metadata credential'
           result = {
               'sourceCommit': os.environ['GITHUB_SHA'],
               'applicationTree': subprocess.check_output(['git', 'rev-parse', 'HEAD:AnyAnime'], text=True).strip(),
@@ -65,6 +93,7 @@ jobs:
               'bundleID': built['CFBundleIdentifier'],
               'ipaSHA256': hashlib.sha256(ipa.read_bytes()).hexdigest(),
               'unsigned': True,
+              'metadataCredentialEmbedded': True,
               'validation': 'Compilation and package identity only',
               'playbackVerifiedByThisWorkflow': False,
               'physicalIPhoneAutomaticPiPVerifiedByThisWorkflow': False,

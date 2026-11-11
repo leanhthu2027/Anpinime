@@ -22,10 +22,12 @@ enum AetherMetadataSettings {
     /// testable without touching the user's Keychain or real credential.
     static func configuredCredential(environment: [String: String], stored: String?, bundleURL: URL?) -> String? {
         if let value = value(in: environment) { return value }
-        if let value = clean(stored) { return value }
-        guard let bundleURL, let data = try? Data(contentsOf: bundleURL), data.count <= 32 * 1024,
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String] else { return nil }
-        return value(in: plist)
+        if let bundleURL, let data = try? Data(contentsOf: bundleURL), data.count <= 32 * 1024,
+           let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String],
+           let value = value(in: plist) { return value }
+        // Older versions exposed a token field. A stale saved value must not
+        // override the verified default shipped by this version.
+        return clean(stored)
     }
 
     private static func value(in settings: [String: String]) -> String? {

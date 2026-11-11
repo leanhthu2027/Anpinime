@@ -13,7 +13,8 @@ final class AetherProvider: MovieSourceProviding {
     private let session: URLSession
     private let credential: () -> String?
     private let language: () -> String
-    private let resolveDomain: (_ force: Bool) async throws -> URL
+    typealias StreamResolver = (_ type: String, _ id: Int, _ season: Int?, _ episode: Int?) async throws -> ResolvedPlayback
+    private let resolveStream: StreamResolver
     private var credentialIdentity: String?
     private var languageIdentity = ""
     private var cacheGeneration = UUID()
@@ -22,12 +23,16 @@ final class AetherProvider: MovieSourceProviding {
 
     init(session: URLSession? = nil, credential: @escaping () -> String? = AetherMetadataSettings.credential,
          language: @escaping () -> String = { UserDefaults.standard.string(forKey: AetherMetadataSettings.languageKey) ?? "vi-VN" },
-         resolveDomain: @escaping (_ force: Bool) async throws -> URL = { try await AetherDomainResolver.shared.resolve(force: $0).origin }) {
+         resolveStream: @escaping StreamResolver = { type, id, season, episode in
+             let stream = try await AetherStreamClient().resolve(mediaType: type, id: id, season: season, episode: episode)
+             guard let variant = stream.variants.first else { throw AetherStreamError.noStreams }
+             return ResolvedPlayback(url: variant.url, headers: variant.headers, webURL: nil, isWeb: false)
+         }) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 12; config.timeoutIntervalForResource = 20
         config.httpShouldSetCookies = false
         self.session = session ?? URLSession(configuration: config)
-        self.credential = credential; self.language = language; self.resolveDomain = resolveDomain
+        self.credential = credential; self.language = language; self.resolveStream = resolveStream
     }
     func invalidate() {
         cacheGeneration = UUID()
@@ -146,15 +151,22 @@ final class AetherProvider: MovieSourceProviding {
     func resolve(_ episode: Episode, refresh: Bool = false) async throws -> ResolvedPlayback {
         guard episode.source == .aether,
               case .aether(let kind, let id, let season, let number) = episode.playback else { throw AetherCatalogError.invalidRoute }
-        let path = try AetherCatalog.playbackPath(type: kind, id: id, season: season, episode: number)
+        _ = try AetherCatalog.playbackPath(type: kind, id: id, season: season, episode: number)
         let expected = kind == "movie" ? AetherCatalog.canonical(kind, id: id)
             : AetherCatalog.canonical(kind, id: id).appendingPathComponent("season/\(season!)/episode/\(number!)")
         guard episode.url == expected else { throw AetherCatalogError.invalidRoute }
-        let domain = try await resolveDomain(refresh)
+        let result = try await resolveStream(kind, id, season, number)
         try Task.checkCancellation()
-        guard let origin = AetherDomainPolicy.origin(domain), origin == domain else { throw AetherCatalogError.invalidRoute }
-        let url = domain.appendingPathComponent(path)
-        return ResolvedPlayback(url: url, headers: [:], webURL: url, isWeb: true)
+        guard !result.isWeb, result.webURL == nil, AetherStreamClient.safeURL(result.url.absoluteString) != nil else {
+            throw AetherCatalogError.invalidData
+        }
+        return result
+    }
+    func imdbID(mediaType: String, id: Int) async throws -> String? {
+        guard id > 0, mediaType == "movie" || mediaType == "tv" else { throw AetherCatalogError.invalidRoute }
+        let data = try await request(mediaType == "movie" ? "movie/\(id)" : "tv/\(id)/external_ids")
+        let value = data["imdb_id"] as? String
+        return value?.range(of: #"^tt[0-9]{5,12}$"#, options: .regularExpression) == nil ? nil : value
     }
     private func loadGenres() async {
         guard (try? authorization()) != nil else { return }

@@ -42,6 +42,20 @@ enum NativePiPPolicy {
     }
 }
 
+/// One Home/background visit owns at most one automatic start. An existing
+/// window counts too: closing a window that AVKit (or the user) opened must not
+/// cause the cleanup callback to reopen it while the app remains backgrounded.
+struct NativePiPBackgroundSession {
+    private(set) var attempted = false
+
+    mutating func enteredBackground(ownedPictureInPicture: Bool) {
+        attempted = attempted || ownedPictureInPicture
+    }
+
+    mutating func requestedStart() { attempted = true }
+    mutating func enteredForeground() { attempted = false }
+}
+
 /// One AVKit restore request owns one completion. Consume it before invoking
 /// external code, which can synchronously request restoration again.
 struct NativePiPRestoreHandshake {

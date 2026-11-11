@@ -13,6 +13,14 @@ Workflow cũ được đổi tên **Full playback verification (manual)** và b�
 push. Chỉ chạy kiểm tra iOS đầy đủ khi người dùng yêu cầu rõ. Không tự retry
 build hoặc tự chuyển sang pipeline đầy đủ.
 
+Nếu token tích hợp không có quyền ghi Actions secrets, workflow nhẹ có thể
+nhận cấu hình TMDB bằng một handoff mã hóa gắn với đúng commit/run/attempt.
+Runner chỉ tải lên public key nhỏ, giữ private key tạm trong `RUNNER_TEMP`;
+workspace dùng `Tools/deliver-metadata-handoff.py` gửi ciphertext trên nhánh
+riêng. Thời gian chờ tối đa 180 giây nằm trong cùng job macOS 20 phút; không
+dispatch thêm workflow, không retry. Credential không nằm trong Git, input hay
+log. Secrets vẫn được ưu tiên nếu đã có. Handoff không kiểm tra playback/PiP.
+
 Kiểm tra JavaScript, Home/cache, parser và network fixture phù hợp được chạy
 trong workspace Linux trước khi gửi build. Những bộ Swift phụ thuộc CryptoKit,
 Combine/SwiftUI hoặc UIKit có thể cần macOS; ghi rõ phần chưa chạy, không thay

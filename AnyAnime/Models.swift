@@ -20,7 +20,6 @@ enum ContentSource: String, CaseIterable, Identifiable {
         }
     }
     var isMovie: Bool { self != .anime }
-    var requiresWebsitePlayback: Bool { self == .aether }
 }
 
 /// Presentation only: provider identifiers, URLs and saved history stay unchanged.

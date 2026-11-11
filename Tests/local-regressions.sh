@@ -20,7 +20,6 @@ bash Tests/aether-smoke.sh
 "$ANPINIME_SWIFTC" AnyAnime/NativePiPPolicy.swift Tests/NativePiPPolicyTests.swift -o "$ANPINIME_CHECK_TEMP/pip"
 "$ANPINIME_CHECK_TEMP/pip"
 "$ANPINIME_NODE" Tests/player.test.cjs
-"$ANPINIME_NODE" Tests/aether-native-player.test.cjs
 
 ANPINIME_PARSER=(AnyAnime/Models.swift AnyAnime/AnimeSiteConfiguration.swift AnyAnime/HTMLDocument.swift AnyAnime/HTMLParser.swift AnyAnime/MovieBrowseCatalog.swift AnyAnime/MovieCatalog.swift)
 "$ANPINIME_SWIFTC" "${ANPINIME_PARSER[@]}" AnyAnime/AnimeScheduleStore.swift AnyAnime/Phim4KRelayNaming.swift AnyAnime/SearchHistory.swift AnyAnime/FilmMediaTransform.swift Tests/main.swift -o "$ANPINIME_CHECK_TEMP/parser"

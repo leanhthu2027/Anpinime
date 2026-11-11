@@ -154,7 +154,7 @@ actor AetherDomainResolver {
                 if [200, 403].contains(response.statusCode),
                    html.lowercased().contains("cf-chl-") || html.lowercased().contains("<title>just a moment") {
                     challengedOrigin = challengedOrigin ?? origin
-                    continue // Prefer a normal mirror, otherwise show verification in WebKit.
+                    continue // Prefer a normal mirror; report a challenge separately.
                 }
                 guard (200..<300).contains(response.statusCode) else { continue }
                 let result = Selection(origin: origin, verifiedHosts: hosts)
@@ -168,7 +168,7 @@ actor AetherDomainResolver {
         }
         if let challengedOrigin {
             // A reachable challenge is not a working-domain cache entry and is
-            // never solved/bypassed by the resolver. Let the user interact with it.
+            // never treated as verified by the resolver.
             return Selection(origin: challengedOrigin, verifiedHosts: hosts, needsVerification: true)
         }
         throw AetherError.unavailable

@@ -18,8 +18,8 @@ import Foundation
         try save(["TMDB_API_KEY": fixture])
         check(AetherMetadataSettings.configuredCredential(environment: [:], stored: nil, bundleURL: url) == fixture,
               "a packaged default configures metadata without user input")
-        check(AetherMetadataSettings.configuredCredential(environment: [:], stored: "stored-token", bundleURL: url) == "stored-token",
-              "an explicit Keychain choice overrides the packaged default")
+        check(AetherMetadataSettings.configuredCredential(environment: [:], stored: "stored-token", bundleURL: url) == fixture,
+              "a stale legacy Keychain token cannot override the verified packaged default")
         check(AetherMetadataSettings.configuredCredential(environment: ["TMDB_READ_TOKEN": "runtime-token"], stored: "stored-token", bundleURL: url) == "runtime-token",
               "runtime binding retains priority")
         check(AetherMetadataSettings.configuredCredential(environment: ["TMDB_API_KEY": "invalid"], stored: nil, bundleURL: url) == fixture,

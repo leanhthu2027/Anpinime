@@ -11,8 +11,6 @@ final class PlaybackState: ObservableObject {
     @Published var pictureInPictureActive = false
     @Published var pictureInPictureError: String?
     @Published var pictureInPicturePending = false
-    @Published var websiteControlsAvailable = false
-    @Published var websiteControlsVisible = false
     #if DEBUG
     var pipSmokeFrames = 0
     var pipSmokeSeekPauseRestored = false
@@ -42,6 +40,18 @@ final class PlaybackState: ObservableObject {
     @Published var supportsAdvancedSubtitles = false
     @Published var secondarySubtitleTrack = "off"
     @Published var subtitleStyle = SubtitleStyle.load()
+    @Published var servers: [PlaybackChoice] = []
+    @Published var server = ""
+    @Published var externalSubtitles: [PlaybackChoice] = []
+    @Published var externalSubtitle: String?
+    @Published var externalSecondarySubtitle: String?
+    @Published var subtitleStatus: String?
+    @Published var subtitleBusy = false
+    @Published var canTranslateSubtitle = false
+    var translateSubtitle: (() -> Void)?
+    var availableSubtitles: [PlaybackChoice] { subtitleTracks + externalSubtitles }
+    var selectedSubtitle: String { externalSubtitle ?? subtitleTrack }
+    var selectedSecondarySubtitle: String { externalSecondarySubtitle ?? secondarySubtitleTrack }
     var importSubtitle: ((URL, String) -> Void)?
     var chooseOption: ((String, String) -> Void)?
     var command: ((String, Double) -> Void)?
@@ -54,7 +64,8 @@ final class PlaybackState: ObservableObject {
     func reset() {
         loading = true; buffering = false; playing = false; userPaused = false
         pictureInPictureSupported = false; pictureInPictureActive = false; pictureInPicturePending = false; pictureInPictureError = nil
-        websiteControlsAvailable = false; websiteControlsVisible = false
+        servers = []; server = ""; externalSubtitles = []; externalSubtitle = nil; externalSecondarySubtitle = nil
+        subtitleStatus = nil; subtitleBusy = false; canTranslateSubtitle = false; translateSubtitle = nil
         currentTime = 0; duration = 0; error = nil; verification = false
         videoWidth = 0; videoHeight = 0
         audioTracks = []; subtitleTracks = []; audioTrack = ""; subtitleTrack = "off"
@@ -112,19 +123,11 @@ struct PlayerView: View {
                     .id(current.id + "-\(attempt)")
                     .ignoresSafeArea()
 
-                if playback.loading && !playback.playing && !playback.verification && !playback.websiteControlsVisible {
+                if playback.loading && !playback.playing && !playback.verification {
                     loadingBackdrop(size: geometry.size)
                 }
 
-                if playback.websiteControlsVisible {
-                    VStack {
-                        HStack {
-                            controlButton("chevron.left", "Về điều khiển Anpinime") { playback.send("websiteControls", 0) }
-                            Spacer()
-                        }
-                        Spacer()
-                    }.padding()
-                } else if !playback.verification && playback.engine == "AVPlayer" {
+                if !playback.verification && playback.engine == "AVPlayer" {
                     // Let AVKit receive gestures for its own PiP, tracks, seek
                     // and fullscreen controls; the app still supplies dismissal.
                     VStack { HStack { controlButton("xmark", "Đóng trình phát") { dismiss() }; Spacer() }; Spacer() }.padding()
@@ -458,7 +461,7 @@ struct PlayerView: View {
     private func choices(_ kind: String) -> [PlaybackChoice] {
         switch kind {
         case "audio": return playback.audioTracks
-        case "subtitles": return playback.subtitleTracks
+        case "subtitles": return playback.availableSubtitles
         case "quality": return playback.qualities.map { .init(id: $0.id, title: $0.title) }
         default: return episodes.reduce(into: [PlaybackChoice]()) { result, episode in
             if !result.contains(where: { $0.id == episode.season }) { result.append(.init(id: episode.season, title: episode.season)) }
@@ -469,7 +472,7 @@ struct PlayerView: View {
     private func selectedChoice(_ kind: String) -> String {
         switch kind {
         case "audio": return playback.audioTrack
-        case "subtitles": return playback.subtitleTrack
+        case "subtitles": return playback.selectedSubtitle
         case "quality": return playback.quality
         default: return panelSeason
         }
@@ -540,11 +543,6 @@ struct PlayerView: View {
     }
 
     private func openPanel(_ name: String) {
-        if name == "quality", current.source == .aether {
-            panel = nil
-            playback.send("websiteControls", 1)
-            return
-        }
         hideTask?.cancel(); panelSeason = current.season
         withAnimation(.easeOut(duration: 0.2)) { panel = name }
     }

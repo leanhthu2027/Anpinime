@@ -14,6 +14,7 @@ struct NativePiPPolicyTests {
     static func main() {
         verifyReadiness()
         verifyPausedManualEntry()
+        verifyBackgroundOwnership()
         require(NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
             decoderReady: true, sourceAttached: true, attempted: false),
             "Home transition may acquire the first PiP frame when speculative snapshot priming was unavailable")
@@ -35,6 +36,36 @@ struct NativePiPPolicyTests {
         verifyConcurrentFrameGate()
         verifyLateLifecycleCallbacks()
         print("\(checks) native PiP policy checks passed")
+    }
+
+    private static func verifyBackgroundOwnership() {
+        func mayStart(_ session: NativePiPBackgroundSession) -> Bool {
+            NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
+                decoderReady: true, sourceAttached: true, attempted: session.attempted)
+        }
+
+        var session = NativePiPBackgroundSession()
+        session.enteredBackground(ownedPictureInPicture: false)
+        require(mayStart(session), "the first Home visit can request automatic PiP")
+        session.requestedStart()
+        session.enteredBackground(ownedPictureInPicture: false)
+        require(!mayStart(session), "cleanup after a failed or closed automatic window cannot reopen PiP in background")
+
+        session.enteredForeground()
+        require(mayStart(session), "returning to the app permits a later Home gesture to start PiP")
+        session.enteredBackground(ownedPictureInPicture: true)
+        session.enteredBackground(ownedPictureInPicture: false)
+        require(!mayStart(session), "closing an existing manual or system-started PiP window in background cannot restart it")
+
+        session.enteredForeground()
+        session.enteredBackground(ownedPictureInPicture: false)
+        session.requestedStart()
+        session.enteredBackground(ownedPictureInPicture: false)
+        require(!mayStart(session), "a late AVKit start also consumes the current background visit")
+
+        session.enteredForeground()
+        session.enteredBackground(ownedPictureInPicture: false)
+        require(mayStart(session), "a later background visit remains eligible after a closed system window")
     }
 
     private static func verifyPausedManualEntry() {

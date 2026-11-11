@@ -21,7 +21,7 @@ final class MPVPlaybackController: UIViewController {
     private var initialViewport: CGSize?
     var onViewportChange: ((CGSize) -> Void)?
     private var automaticPiPPrepared = false
-    private var automaticAttemptedInBackground = false
+    private var backgroundPiPSession = NativePiPBackgroundSession()
     private var wasInBackground = false
     private var manuallyRequestedPiP = false
     private var piPGeneration = UUID()
@@ -275,6 +275,9 @@ final class MPVPlaybackController: UIViewController {
         pictureInPicture = pip
         pip.onSystemStart = { [weak self] in
             guard let self, self.piPGeneration == generation else { return }
+            if UIApplication.shared.applicationState == .background {
+                self.backgroundPiPSession.requestedStart()
+            }
             if !self.manuallyRequestedPiP, !self.automaticPiPEnabled {
                 self.automaticPiPPrepared = false
                 // AVKit may have queued this callback before the preference was
@@ -371,6 +374,8 @@ final class MPVPlaybackController: UIViewController {
 
     @objc private func background() {
         wasInBackground = true
+        backgroundPiPSession.enteredBackground(ownedPictureInPicture:
+            playback.pictureInPictureActive || playback.pictureInPicturePending)
         tracePiP("backgroundBeforeReadiness")
         let automatic = automaticPiPEnabled
         if !automatic {
@@ -382,11 +387,11 @@ final class MPVPlaybackController: UIViewController {
         if NativePiPPolicy.canAttemptAutomaticStart(preference: automatic,
             supported: playback.pictureInPictureSupported, playing: playingForPiP,
             decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil,
-            attempted: automaticAttemptedInBackground),
+            attempted: backgroundPiPSession.attempted),
             !playback.pictureInPictureActive, !playback.pictureInPicturePending {
             // Manual startup can acquire its first CPU frame even if speculative
             // snapshot priming failed. Use that same bounded path once on Home.
-            automaticAttemptedInBackground = true
+            backgroundPiPSession.requestedStart()
             #if DEBUG
             automaticPiPRequests += 1
             recordAutomaticPiP("automaticBackgroundRequest")
@@ -400,7 +405,7 @@ final class MPVPlaybackController: UIViewController {
     @objc private func foreground() {
         let returnedFromBackground = wasInBackground
         wasInBackground = false
-        automaticAttemptedInBackground = false
+        backgroundPiPSession.enteredForeground()
         if pictureInPicture?.pendingRestoreRequestID != nil {
             // AVKit may wait for its restore completion before didStop. Do not
             // stop/detach the source while the original UI is being attached.
@@ -503,6 +508,10 @@ final class MPVPlaybackController: UIViewController {
 
     func perform(_ name: String, value: Double) {
         switch name {
+        case "pipStop":
+            guard let pip = pictureInPicture else { return }
+            let generation = piPGeneration
+            pip.stop(restore: true) { [weak self] in self?.finishedPictureInPicture(generation: generation) }
         case "pip":
             guard playback.pictureInPictureSupported,
                   NativePiPPolicy.canBootstrapFrame(playing: playingForPiP, manualRequest: true,
@@ -533,6 +542,7 @@ final class MPVPlaybackController: UIViewController {
         guard ["audio", "subtitles", "secondarySubtitles"].contains(kind) else { return }
         let tracks = kind == "audio" ? playback.audioTracks : playback.subtitleTracks
         guard id == "off" || tracks.contains(where: { $0.id == id }) else { return }
+        if kind != "audio" { pendingImports.removeAll { $0.1 == kind } }
         // One subtitle track cannot occupy both lanes.
         if kind == "subtitles", id != "off", id == playback.secondarySubtitleTrack { set("secondary-sid", "no") }
         if kind == "secondarySubtitles", id != "off", id == playback.subtitleTrack { set("sid", "no") }
@@ -540,7 +550,19 @@ final class MPVPlaybackController: UIViewController {
         updateSelectedTracks()
     }
     func addSubtitle(_ url: URL, slot: String) {
+        if let pending = pendingImports.firstIndex(where: { $0.0.path == url.path }) {
+            pendingImports[pending] = (url, slot)
+            return
+        }
         guard loaded else { pendingImports.append((url, slot)); return }
+        for index in 0..<min(200, Int(number("track-list/count"))) {
+            let root = "track-list/\(index)/"
+            if string(root + "type") == "sub", string(root + "external-filename") == url.path {
+                refreshTracks()
+                choose(slot, id: string(root + "id"))
+                return
+            }
+        }
         // Select by external filename after the asynchronous track-list change.
         pendingImports.append((url, slot))
         command(["sub-add", url.path, "auto", url.deletingPathExtension().lastPathComponent])
