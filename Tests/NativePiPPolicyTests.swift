@@ -14,6 +14,18 @@ struct NativePiPPolicyTests {
     static func main() {
         verifyReadiness()
         verifyPausedManualEntry()
+        require(NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
+            decoderReady: true, sourceAttached: true, attempted: false),
+            "Home transition may acquire the first PiP frame when speculative snapshot priming was unavailable")
+        require(!NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
+            decoderReady: true, sourceAttached: true, attempted: true),
+            "a failed automatic request cannot restart endlessly from its cleanup callback")
+        require(!NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: false,
+            decoderReady: true, sourceAttached: true, attempted: false),
+            "Home transition respects a paused video")
+        require(!NativePiPPolicy.canAttemptAutomaticStart(preference: false, supported: true, playing: true,
+            decoderReady: true, sourceAttached: true, attempted: false),
+            "disabled automatic PiP remains disabled even with a ready decoder")
         verifyRetryRecovery()
         verifyInterruptedRequest()
         verifyForegroundAndControls()

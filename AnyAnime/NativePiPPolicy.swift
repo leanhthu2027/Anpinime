@@ -3,6 +3,10 @@ import Foundation
 /// State gates shared by the native bridge and controller. These describe app
 /// readiness; only AVKit can report whether a system PiP window starts.
 enum NativePiPPolicy {
+    static func canAttemptAutomaticStart(preference: Bool, supported: Bool, playing: Bool,
+                                         decoderReady: Bool, sourceAttached: Bool, attempted: Bool) -> Bool {
+        preference && supported && playing && decoderReady && sourceAttached && !attempted
+    }
     /// A paused decoded picture can enter PiP after an explicit user gesture.
     /// Automatic entry still requires actual playback; preloading, EOF and a
     /// detached source never qualify for either kind of frame acquisition.

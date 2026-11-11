@@ -65,6 +65,7 @@ final class PlaybackState: ObservableObject {
 
 struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var service: AnimeService
     @StateObject private var playback = PlaybackState()
     let episode: Episode
@@ -211,13 +212,20 @@ struct PlayerView: View {
             hideTask?.cancel()
             // WebKit fullscreen and AVKit PiP can temporarily cover this host.
             // Actual dismissal shuts down the backend in dismantle.
-            if current.source != .aether && !playback.pictureInPictureActive && !playback.pictureInPicturePending {
+            if current.source != .aether && playback.engine != "mpv" && playback.engine != "AVPlayer"
+                && !playback.pictureInPictureActive && !playback.pictureInPicturePending {
                 playback.send("pause")
             }
             UIApplication.shared.isIdleTimerDisabled = false
             UIScreen.main.brightness = originalBrightness
         }
         .onChange(of: playback.playing) { _ in scheduleHide() }
+        .onChange(of: scenePhase) { phase in
+            // A Home gesture may interrupt a slider drag before SwiftUI sends
+            // onEditingChanged(false). Resume displaying decoder time.
+            scrubbing = false
+            if phase == .active { scheduleHide() }
+        }
         .onChange(of: playback.loading) { loading in if !loading { scheduleHide() } }
         .onChange(of: playback.pictureInPictureActive) { _ in finishReplacementIfReady() }
         .onChange(of: playback.pictureInPicturePending) { _ in finishReplacementIfReady() }

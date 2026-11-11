@@ -15,3 +15,6 @@ trap 'rm -rf "$ANPINIME_AETHER_TEMP"' EXIT
   AnyAnime/Aether/AetherCatalog.swift AnyAnime/Aether/AetherProvider.swift \
   Tests/AetherCatalogTests.swift -o "$ANPINIME_AETHER_TEMP/catalog"
 "$ANPINIME_AETHER_TEMP/catalog"
+"$ANPINIME_SWIFTC" AnyAnime/Aether/AetherMetadataSettings.swift Tests/MetadataCredentialTests.swift -o "$ANPINIME_AETHER_TEMP/credentials"
+"$ANPINIME_AETHER_TEMP/credentials"
+python3 Tests/metadata_credentials_test.py

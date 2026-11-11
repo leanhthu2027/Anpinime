@@ -303,8 +303,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     }
 
     @objc private func restoreWebForeground() {
+        guard active else { return }
         if let controller = playerController {
             controller.canStartPictureInPictureAutomaticallyFromInline = UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true
+            updateNativeState()
             acknowledgeAVRestoreIfReady()
             return
         }
@@ -695,9 +697,11 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 self.playback.endCount += 1
             }
         }
-        nativeTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+        let progressTimer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateNativeState() }
         }
+        nativeTimer = progressTimer
+        RunLoop.main.add(progressTimer, forMode: .common)
     }
 
     func playerViewControllerWillStartPictureInPicture(_ controller: AVPlayerViewController) {

@@ -21,6 +21,7 @@ final class MPVPlaybackController: UIViewController {
     private var initialViewport: CGSize?
     var onViewportChange: ((CGSize) -> Void)?
     private var automaticPiPPrepared = false
+    private var automaticAttemptedInBackground = false
     private var wasInBackground = false
     private var manuallyRequestedPiP = false
     private var piPGeneration = UUID()
@@ -124,9 +125,11 @@ final class MPVPlaybackController: UIViewController {
         applyStyle()
         command(["loadfile", url.absoluteString, "replace"])
         startedAt = Date()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        let progressTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
         }
+        timer = progressTimer
+        RunLoop.main.add(progressTimer, forMode: .common)
         NotificationCenter.default.addObserver(self, selector: #selector(prepareForBackground), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(background), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(foreground), name: UIApplication.didBecomeActiveNotification, object: nil)
@@ -376,7 +379,14 @@ final class MPVPlaybackController: UIViewController {
         }
         updateAutomaticPiPReadiness()
         tracePiP("backgroundAfterReadiness")
-        if automatic, automaticPiPPrepared, playingForPiP {
+        if NativePiPPolicy.canAttemptAutomaticStart(preference: automatic,
+            supported: playback.pictureInPictureSupported, playing: playingForPiP,
+            decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil,
+            attempted: automaticAttemptedInBackground),
+            !playback.pictureInPictureActive, !playback.pictureInPicturePending {
+            // Manual startup can acquire its first CPU frame even if speculative
+            // snapshot priming failed. Use that same bounded path once on Home.
+            automaticAttemptedInBackground = true
             #if DEBUG
             automaticPiPRequests += 1
             recordAutomaticPiP("automaticBackgroundRequest")
@@ -390,6 +400,7 @@ final class MPVPlaybackController: UIViewController {
     @objc private func foreground() {
         let returnedFromBackground = wasInBackground
         wasInBackground = false
+        automaticAttemptedInBackground = false
         if pictureInPicture?.pendingRestoreRequestID != nil {
             // AVKit may wait for its restore completion before didStop. Do not
             // stop/detach the source while the original UI is being attached.
@@ -405,6 +416,7 @@ final class MPVPlaybackController: UIViewController {
         } else { updateAutomaticPiPReadiness() }
         if backgroundPaused && !userPaused { set("pause", "no") }
         backgroundPaused = false
+        poll()
     }
 
     private func acknowledgePiPRestoreIfReady() {

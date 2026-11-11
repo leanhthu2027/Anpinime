@@ -14,3 +14,6 @@ Tests/source2-hls/
 
 __pycache__/
 *.py[cod]
+
+# Generated privately before packaging; never commit credentials.
+AnyAnime/Private/MetadataCredentials.plist

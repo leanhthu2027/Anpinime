@@ -3,8 +3,8 @@ import Foundation
 import Security
 #endif
 
-/// TMDB credentials belong to the user, as in Streambert. Never ship a copied
-/// provider key, persist one in UserDefaults, or forward it to the video host.
+/// The app's metadata credential is supplied privately at build time. Its value
+/// is never shown by Settings, stored in UserDefaults or sent to the video host.
 enum AetherMetadataSettings {
     static let languageKey = "AnPinime.vipMetadataLanguage"
     static let attribution = "Danh mục và thông tin phim: TMDB. Video và phụ đề: Aether."
@@ -12,9 +12,30 @@ enum AetherMetadataSettings {
     private static let account = "tmdb-read-access"
     static var configured: Bool { credential() != nil }
     static func credential() -> String? {
-        for name in ["TMDB_READ_TOKEN", "TMDB_API_KEY"] {
-            if let value = clean(ProcessInfo.processInfo.environment[name]) { return value }
-        }
+        let bundleURL = Bundle.main.url(forResource: "MetadataCredentials", withExtension: "plist")
+            ?? Bundle.main.url(forResource: "MetadataCredentials", withExtension: "plist", subdirectory: "Private")
+        return configuredCredential(environment: ProcessInfo.processInfo.environment,
+                                    stored: storedCredential(), bundleURL: bundleURL)
+    }
+
+    /// The transport and resource seam makes precedence and the packaged default
+    /// testable without touching the user's Keychain or real credential.
+    static func configuredCredential(environment: [String: String], stored: String?, bundleURL: URL?) -> String? {
+        if let value = value(in: environment) { return value }
+        if let value = clean(stored) { return value }
+        guard let bundleURL, let data = try? Data(contentsOf: bundleURL), data.count <= 32 * 1024,
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String] else { return nil }
+        return value(in: plist)
+    }
+
+    private static func value(in settings: [String: String]) -> String? {
+        if let token = clean(settings["TMDB_READ_TOKEN"]) { return token }
+        guard let key = clean(settings["TMDB_API_KEY"]),
+              key.range(of: #"^[a-fA-F0-9]{32}$"#, options: .regularExpression) != nil else { return nil }
+        return key
+    }
+
+    private static func storedCredential() -> String? {
         #if canImport(Security)
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service, kSecAttrAccount as String: account,
@@ -61,8 +82,8 @@ enum AetherCatalogError: LocalizedError {
     case missingCredential, invalidCredential, secureStorage, invalidData, invalidRoute, unavailable, http(Int)
     var errorDescription: String? {
         switch self {
-        case .missingCredential: return "Thêm TMDB API Read Access Token trong Cài đặt → Anpinime VIP để tải danh mục phim."
-        case .invalidCredential: return "Thông tin truy cập TMDB chưa hợp lệ. Hãy kiểm tra trong Cài đặt → Anpinime VIP."
+        case .missingCredential: return "Bản cài đặt thiếu cấu hình danh mục phim. Hãy cập nhật bản Anpinime mới nhất."
+        case .invalidCredential: return "Cấu hình danh mục phim chưa được TMDB chấp nhận. Hãy cập nhật bản Anpinime mới nhất."
         case .secureStorage: return "Chưa lưu được thông tin truy cập vào Keychain."
         case .invalidData: return "Thông tin phim chưa đầy đủ. Hãy thử tải lại."
         case .invalidRoute: return "Đường dẫn danh mục hoặc tập phim không hợp lệ."

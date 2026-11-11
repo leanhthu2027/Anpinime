@@ -18,6 +18,11 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare private metadata configuration
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+        run: python3 Tools/prepare-metadata-credentials.py
       - name: Install XcodeGen and generate project
         run: |
           set -euo pipefail
