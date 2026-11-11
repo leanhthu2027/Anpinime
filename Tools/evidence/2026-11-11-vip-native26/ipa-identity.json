@@ -1,0 +1,13 @@
+{
+  "sourceCommit": "e86c25b1f5e2d745f972d8b8ba2502f0957b0056",
+  "applicationTree": "aafe6a13dae2ee83c323fac7887029f26e4357e7",
+  "version": "2.9.4",
+  "build": "26",
+  "bundleID": "com.xemphim.aipinime",
+  "ipaSHA256": "89556b7558de6752996bd34e3fef28b22cba58a67be5e1ff92bdf2ba06ceed54",
+  "unsigned": true,
+  "metadataCredentialEmbedded": true,
+  "validation": "Compilation and package identity only",
+  "playbackVerifiedByThisWorkflow": false,
+  "physicalIPhoneAutomaticPiPVerifiedByThisWorkflow": false
+}

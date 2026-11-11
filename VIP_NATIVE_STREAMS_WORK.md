@@ -86,3 +86,12 @@ failure and does not validate the iOS build.
 in the same process, waits for the exact new run, refuses an existing active run,
 and never repeats a dispatch. It has not been executed against Actions. Another
 macOS run requires explicit authorization under `Tools/build-cost-policy.md`.
+
+## Successful authorized IPA build
+
+Run https://github.com/pythonltn2000/Anpinime/actions/runs/43014281632 completed successfully.
+IPA 2.9.4 (26), unsigned, artifact:
+https://github.com/pythonltn2000/Anpinime/actions/runs/43014281632/artifacts/13851917889
+
+Downloaded package checksum, version and private metadata resource were verified
+in the workspace. iPhone playback and automatic PiP remain device checks.
