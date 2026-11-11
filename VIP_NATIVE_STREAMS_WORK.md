@@ -70,3 +70,19 @@ full-movie translation, quality changes while paused, PiP Play/Pause/seek, autom
 Home gesture, background sound/video, return progress and close/restore behavior.
 A successful IPA build does not establish any of those device results. Provider
 endpoints and signed media delivery can change independently of the app.
+
+## IPA attempt 26: metadata delivery timeout
+
+Run: https://github.com/pythonltn2000/Anpinime/actions/runs/42978424520
+
+Source `4a8443499ee27612a229c2ea6e4540448d9be4b1`. The job ran from
+07:17:37 to 07:20:47 UTC and failed while waiting for the encrypted metadata
+handoff. The workspace turn was interrupted before the delivery command started.
+XcodeGen, Xcode compilation and packaging were all skipped; no IPA was produced.
+The ephemeral private key was cleaned up successfully. This is not a compiler
+failure and does not validate the iOS build.
+
+`Tools/build-ipa-once.py` now coordinates a single dispatch and metadata delivery
+in the same process, waits for the exact new run, refuses an existing active run,
+and never repeats a dispatch. It has not been executed against Actions. Another
+macOS run requires explicit authorization under `Tools/build-cost-policy.md`.
