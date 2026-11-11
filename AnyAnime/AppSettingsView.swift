@@ -56,6 +56,7 @@ struct AppSettingsView: View {
                   footer: { Text("Địa chỉ này dùng chung cho danh sách, tìm kiếm, thông tin, tập phim và lịch chiếu anime. Để trống để tìm tên miền tự động.") }
             }
             if service.source == .aether { AetherSettingsSection() }
+            AppUpdateSection()
             Section("Giới thiệu") {
                 LabeledContentCompat(title: "Ứng dụng", value: "AnPinime")
                 LabeledContentCompat(title: "Phiên bản", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.0")

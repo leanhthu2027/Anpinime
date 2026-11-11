@@ -28,6 +28,8 @@ final class AetherPlayerViewController: UIViewController {
     private var domainTask: Task<Void, Never>?
     private var qualityTask: Task<Void, Never>?
     private var generation = UUID()
+    private var failedServers = Set<String>()
+    private var recovering = false
     private var live = true
     private var shutdownRequested = false
     private var retainedForPiP: AetherPlayerViewController?
@@ -112,7 +114,7 @@ final class AetherPlayerViewController: UIViewController {
                 try await self.finishPiPBeforeReplacement()
                 guard self.live, case .aether(let type, let id, let season, let number) = self.episode.playback else { return }
                 self.playback.loading = true; self.playback.error = nil
-                let result = try await self.streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID)
+                let result = try await self.streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID, excluding: self.failedServers)
                 try Task.checkCancellation()
                 guard self.live, !self.shutdownRequested, let first = result.variants.first else { throw AetherNativeError.noMedia }
                 // PiP may have started while extraction was waiting on the network.
@@ -120,7 +122,7 @@ final class AetherPlayerViewController: UIViewController {
                 try Task.checkCancellation()
                 guard self.live, !self.shutdownRequested else { return }
                 self.cancelSubtitleWork(); self.discoveryTask?.cancel()
-                self.generation = UUID(); self.stream = result
+                self.generation = UUID(); self.stream = result; self.recovering = false
                 self.playback.server = result.serverID
                 self.playback.externalSubtitle = nil; self.playback.externalSubtitles = []
                 self.playback.externalSecondarySubtitle = nil
@@ -158,7 +160,14 @@ final class AetherPlayerViewController: UIViewController {
         player = controller
         controller.onFailure = { [weak self, weak controller] message in
             guard let self, self.live, self.player === controller else { return }
-            self.playback.loading = false; self.playback.error = message + " Hãy thử phát lại hoặc chọn chất lượng khác."
+            guard !self.recovering else { return }
+            self.failedServers.insert(self.playback.server)
+            if AetherStreamClient.servers.contains(where: { !self.failedServers.contains($0.id) }) {
+                self.recovering = true
+                self.load(serverID: nil)
+            } else {
+                self.playback.loading = false; self.playback.error = message + " Các máy chủ dự phòng cũng chưa phát được phim này."
+            }
         }
         controller.onPictureInPictureEnded = { [weak self, weak controller] in
             guard let self, self.player === controller else { return }
