@@ -43,44 +43,80 @@ enum AetherStreamError: LocalizedError {
 /// library. No browser, page playback, embedded controls, or HTML media capture.
 /// Contract verified against aether.st's vendor-BbJGwvp8.js on 2026-11-11.
 struct AetherStreamClient {
-    static let servers = [AetherStreamServer(id: "vidlink", name: "KingLink 🔥"), AetherStreamServer(id: "ly", name: "Ly 🌸")]
+    static let servers = [
+        AetherStreamServer(id: "vidlink", name: "KingLink 🔥"),
+        AetherStreamServer(id: "ly", name: "Ly 🌸"),
+        AetherStreamServer(id: "lul", name: "Lul 👾"),
+        AetherStreamServer(id: "nebula", name: "Nebula 🌌"),
+        AetherStreamServer(id: "lil", name: "Lil 🐣"),
+        AetherStreamServer(id: "meridian", name: "Meridian 🪐"),
+        AetherStreamServer(id: "rock", name: "Rock 🪨"),
+        AetherStreamServer(id: "polaris", name: "Polaris 🌟"),
+        AetherStreamServer(id: "aurora", name: "Aurora 💫"),
+        AetherStreamServer(id: "tiki", name: "Tiki 🗿"),
+        AetherStreamServer(id: "link", name: "Link 🔗"),
+        AetherStreamServer(id: "vidfast", name: "Fast (4K) ⚡"),
+        AetherStreamServer(id: "vidy", name: "Vidy 📺"),
+        AetherStreamServer(id: "aether-subtitulado", name: "Subtitulado 🇪🇸"),
+        AetherStreamServer(id: "aether-latino", name: "Latino 🇪🇸"),
+        AetherStreamServer(id: "aether-castellano", name: "Castellano 🇪🇸"),
+        AetherStreamServer(id: "vine", name: "Vine 🇩🇪"),
+        AetherStreamServer(id: "gallic", name: "Gallic 🇫🇷"),
+        AetherStreamServer(id: "baguette", name: "Baguette 🇫🇷"),
+        AetherStreamServer(id: "poyraz", name: "Poyraz 🇹🇷"),
+        AetherStreamServer(id: "yildiz", name: "Yıldız 🇹🇷"),
+        AetherStreamServer(id: "animetsu", name: "Animetsu 🏯")
+    ]
     typealias Transport = (URLRequest) async throws -> (Data, HTTPURLResponse)
-    private let transport: Transport
+    let transport: Transport
+    let metadataCredential: () -> String?
     private let now: () -> Date
-    init(transport: Transport? = nil, now: @escaping () -> Date = Date.init) {
+    init(transport: Transport? = nil, metadataCredential: @escaping () -> String? = AetherMetadataSettings.credential, now: @escaping () -> Date = Date.init) {
         self.transport = transport ?? { request in
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let response = response as? HTTPURLResponse else { throw AetherStreamError.invalidResponse }
             return (data, response)
         }
         self.now = now
+        self.metadataCredential = metadataCredential
     }
     func resolve(mediaType: String, id: Int, season: Int?, episode: Int?, serverID: String? = nil, excluding: Set<String> = []) async throws -> AetherStream {
         if serverID == nil {
+            let candidates = Self.servers.filter { Self.supports($0.id, mediaType:mediaType) && !excluding.contains($0.id) }
             var last: Error = AetherStreamError.noStreams
-            for server in Self.servers where !excluding.contains(server.id) {
-                try Task.checkCancellation()
-                do { return try await resolve(mediaType: mediaType, id: id, season: season, episode: episode, serverID: server.id) }
+            let deadline = Date().addingTimeInterval(60)
+            // Preserve the quick preferred path, then race bounded batches.
+            for preferred in candidates.prefix(2) {
+                do { return try await resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:preferred.id) }
                 catch { try Task.checkCancellation(); last = error }
+            }
+            let remaining = Array(candidates.dropFirst(2))
+            for start in stride(from:0,to:remaining.count,by:4) {
+                try Task.checkCancellation()
+                guard Date() < deadline else { break }
+                let batch = Array(remaining[start..<min(start+4,remaining.count)])
+                let found = await withTaskGroup(of: AetherStream?.self) { group -> AetherStream? in
+                    for server in batch {
+                        group.addTask { try? await self.resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:server.id) }
+                    }
+                    for await result in group {
+                        if let result { group.cancelAll(); return result }
+                    }
+                    return nil
+                }
+                try Task.checkCancellation()
+                if let found { return found }
             }
             throw last
         }
         let server = serverID ?? "vidlink"
         guard Self.servers.contains(where: { $0.id == server }) else { throw AetherStreamError.unsupportedServer }
-        if server == "ly" {
-            _ = try Self.requestURL(mediaType: mediaType, id: id, season: season, episode: episode, now: now())
-            let route = mediaType == "movie" ? "movie/\(id)" : "tv/\(id)/\(season!)/\(episode!)"
-            var request = URLRequest(url: URL(string: "https://ly.raccoonunbutteredbagel.zip/" + route)!, cachePolicy: .reloadIgnoringLocalCacheData)
-            request.timeoutInterval = 20
-            let (data, response) = try await transport(request)
-            try Task.checkCancellation()
-            guard response.statusCode == 200 else { throw AetherStreamError.rejected(response.statusCode) }
-            guard data.count <= 4 * 1024 * 1024 else { throw AetherStreamError.invalidResponse }
-            return try Self.decodeLy(data)
+        if server != "vidlink" {
+            return try await resolveAdditional(server, mediaType: mediaType, id: id, season: season, episode: episode)
         }
         let url = try Self.requestURL(mediaType: mediaType, id: id, season: season, episode: episode, now: now())
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        request.timeoutInterval = 25
+        request.timeoutInterval = 12
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("https://vidlink.pro/", forHTTPHeaderField: "Referer")
         request.setValue("https://vidlink.pro", forHTTPHeaderField: "Origin")
@@ -154,26 +190,7 @@ struct AetherStreamClient {
     }
     /// Response fields and media headers reproduced from Aether's Ly scraper.
     static func decodeLy(_ data: Data) throws -> AetherStream {
-        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              object["error"] == nil, object["success"] as? Bool != false else { throw AetherStreamError.invalidResponse }
-        var urls = ["stream", "url", "stream_url"].compactMap { object[$0] as? String }
-        for key in ["sources", "streams"] {
-            urls += (object[key] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
-        }
-        var headers = ["Origin": "https://vidly.pro", "Referer": "https://vidly.pro/"]
-        headers.merge(cleanHeaders(object["proxyHeaders"])) { _, new in new }
-        var seen = Set<URL>()
-        let variants = urls.compactMap(Self.safeURL).filter { seen.insert($0).inserted }.enumerated().map {
-            AetherMediaVariant(id: $0.offset == 0 ? "auto" : "ly-\($0.offset)", label: "Luồng \($0.offset + 1)", url: $0.element, headers: headers)
-        }
-        guard !variants.isEmpty else { throw AetherStreamError.noStreams }
-        let captions = (object["subtitles"] as? [[String: Any]] ?? []).compactMap { row -> AetherStreamCaption? in
-            guard let url = safeURL((row["url"] ?? row["file"]) as? String) else { return nil }
-            let title = (row["label"] ?? row["language"] ?? row["lang"]) as? String ?? "Phụ đề"
-            return AetherStreamCaption(id: url.absoluteString, title: title, language: captionLanguage(title), url: url,
-                format: url.pathExtension == "srt" ? "srt" : "vtt", headers: [:])
-        }
-        return AetherStream(serverID: "ly", variants: variants, captions: captions)
+        try decodeAdditional((try? JSONSerialization.jsonObject(with:data)) as? [String:Any] ?? [:], server:"ly", headers:contracts["ly"]!.headers)
     }
     private static func qualityRank(_ value: String) -> Int { value == "4k" ? 2160 : (Int(value) ?? 0) }
     static func captionLanguage(_ value: String) -> String {

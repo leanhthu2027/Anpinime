@@ -1,0 +1,80 @@
+{
+  "vidfast": {
+    "movie": "https://vfast.raccoonunbutteredbagel.zip/movie/354912/servers",
+    "tv": "https://vfast.raccoonunbutteredbagel.zip/tv/1399/1/1/servers"
+  },
+  "nebula": {
+    "movie": "https://filler.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://filler.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "aurora": {
+    "movie": "https://tik.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://tik.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "lul": {
+    "movie": "https://lul.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://lul.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "polaris": {
+    "movie": "https://shore.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://shore.raccoonunbutteredbagel.zip/show/1399?s=1&e=1"
+  },
+  "lil": {
+    "movie": "https://lil.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://lil.raccoonunbutteredbagel.zip/show/1399/1/1"
+  },
+  "ly": {
+    "movie": "https://ly.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://ly.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "rock": {
+    "movie": "https://rock.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://rock.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "link": {
+    "movie": "https://link.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://link.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "vidy": {
+    "movie": "https://vidy.aether.cx/movie/354912",
+    "tv": "https://vidy.aether.cx/tv/1399/1/1"
+  },
+  "aether-latino": {
+    "movie": "https://le.aether.cx/movie/354912?lang=lat",
+    "tv": "https://le.aether.cx/tv/1399/1/1?lang=lat"
+  },
+  "aether-castellano": {
+    "movie": "https://le.aether.cx/movie/354912?lang=esp",
+    "tv": "https://le.aether.cx/tv/1399/1/1?lang=esp"
+  },
+  "aether-subtitulado": {
+    "movie": "https://le.aether.cx/movie/354912?lang=sub",
+    "tv": "https://le.aether.cx/tv/1399/1/1?lang=sub"
+  },
+  "baguette": {
+    "movie": "https://baguette.aether.cx/api/movie/354912",
+    "tv": "https://baguette.aether.cx/api/tv/1399?s=1&e=1"
+  },
+  "gallic": {
+    "movie": "https://api.subl2cw8mg.workers.dev/movie/354912"
+  },
+  "vine": {
+    "movie": "https://vine.aether.cx/movie/354912",
+    "tv": "https://vine.aether.cx/tv/1399/1/1"
+  },
+  "meridian": {
+    "movie": "https://meridian.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://meridian.raccoonunbutteredbagel.zip/show/1399/1/1"
+  },
+  "tiki": {
+    "movie": "https://tiki.raccoonunbutteredbagel.zip/movie/354912",
+    "tv": "https://tiki.raccoonunbutteredbagel.zip/tv/1399/1/1"
+  },
+  "yildiz": {
+    "movie": "https://yildiz.aether.cx/movie/354912",
+    "tv": "https://yildiz.aether.cx/tv/1399/1/1"
+  },
+  "poyraz": {
+    "tv": "https://zephyr-quill-83f2a.subrujplax.workers.dev/tv/1399/1/1"
+  }
+}

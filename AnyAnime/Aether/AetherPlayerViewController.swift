@@ -45,7 +45,9 @@ final class AetherPlayerViewController: UIViewController {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         playback.engine = "mpv"
-        playback.servers = AetherStreamClient.servers.map { .init(id: $0.id, title: $0.name) }
+        if case .aether(let type, _, _, _) = episode.playback {
+            playback.servers = AetherStreamClient.servers.filter { AetherStreamClient.supports($0.id, mediaType:type) }.map { .init(id:$0.id,title:$0.name) }
+        }
         playback.command = { [weak self] name, value in self?.player?.perform(name, value: value) }
         playback.chooseOption = { [weak self] kind, id in self?.choose(kind, id: id) }
         playback.importSubtitle = { [weak self] url, slot in
@@ -177,7 +179,7 @@ final class AetherPlayerViewController: UIViewController {
         controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(controller.view); controller.didMove(toParent: self)
         restoreSelection(on: controller, time: time)
-        if stream?.variants.count == 1, source.id == "auto" { loadHLSQualities(source, controller: controller) }
+        if stream?.variants.count == 1, source.id == "auto", source.url.pathExtension.lowercased() == "m3u8" { loadHLSQualities(source, controller: controller) }
     }
 
     private func restoreSelection(on controller: MPVPlaybackController, time: Double?) {

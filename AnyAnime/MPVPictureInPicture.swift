@@ -176,8 +176,15 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         guard rect.origin.x.isFinite, rect.origin.y.isFinite,
               rect.width.isFinite, rect.height.isFinite, rect.width > 1, rect.height > 1 else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        if displayHost.superview !== window { window.insertSubview(displayHost, at: 0) }
-        displayHost.frame = rect
+        if outputActivated {
+            // AVKit's automatic inline transition needs a visible sample source.
+            // A layer behind the opaque app window only worked for manual PiP.
+            if displayHost.superview !== sourceView { sourceView.addSubview(displayHost) }
+            displayHost.frame = sourceView.bounds
+        } else {
+            if displayHost.superview !== window { window.insertSubview(displayHost, at: 0) }
+            displayHost.frame = rect
+        }
         layer.frame = displayHost.bounds
         CATransaction.commit()
     }
@@ -271,9 +278,24 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         if start { requestStart() }
     }
 
+    /// Produce actual sample buffers while the scene is still foreground-inactive.
+    /// This arms AVKit automatic entry; it does not request a PiP window.
+    func primeAutomaticFrames(handle: OpaquePointer, size: CGSize) {
+        guard !stopped, !stopping else { return }
+        wantsOutput = true
+        outputPreparationFailed = false
+        primeOutput(handle: handle, size: size)
+        activateOutputIfRequested()
+    }
+
     private func activateOutputIfRequested() {
         guard wantsOutput, outputReady, !outputActivated, !stopped, !stopping else { return }
         outputActivated = true
+        if let sourceView {
+            sourceView.addSubview(displayHost)
+            displayHost.frame = sourceView.bounds
+            layer.frame = displayHost.bounds
+        }
         bootstrapFrame = nil
         command("pipOutput", 1)
         invalidatePlaybackState()

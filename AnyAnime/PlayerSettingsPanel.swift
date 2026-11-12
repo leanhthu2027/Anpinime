@@ -17,9 +17,13 @@ struct PlayerSettingsPanel: View {
     @AppStorage("AnPinime.rememberSpeed") private var rememberSpeed = true
     @AppStorage("AnPinime.playbackRate") private var savedRate = 1.0
     @AppStorage("AnPinime.skipSeconds") private var skipSeconds = 10
-    private let tabs = [("audio", "Âm thanh", "speaker.wave.2"), ("subtitles", "Phụ đề", "captions.bubble"),
+    private let baseTabs = [("audio", "Âm thanh", "speaker.wave.2"), ("subtitles", "Phụ đề", "captions.bubble"),
                         ("display", "Hiển thị", "textformat.size"), ("speed", "Tốc độ", "speedometer"),
                         ("general", "Chung", "slider.horizontal.3"), ("info", "Thông tin", "info.circle")]
+
+    private var tabs: [(String, String, String)] {
+        playback.servers.isEmpty ? baseTabs : [("servers", "Máy chủ", "server.rack")] + baseTabs
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,6 +76,11 @@ struct PlayerSettingsPanel: View {
     }
     @ViewBuilder private var content: some View {
         switch tab {
+        case "servers":
+            heading("Nguồn phát")
+            trackList(playback.servers, kind: "server", selected: playback.server)
+            Text("Khi nguồn tự động bị lỗi, ứng dụng thử nguồn dự phòng. Bạn cũng có thể chọn nguồn trực tiếp tại đây.")
+                .font(.caption).foregroundStyle(.secondary)
         case "audio":
             heading("Âm thanh")
             trackList(playback.audioTracks, kind: "audio", selected: playback.audioTrack)

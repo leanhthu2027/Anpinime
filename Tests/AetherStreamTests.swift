@@ -80,6 +80,40 @@ import FoundationNetworking
         check(recovered.serverID == "ly", "malformed KingLink response falls through to Ly")
         do { _ = try await fallback.resolve(mediaType:"movie",id:354912,season:nil,episode:nil,serverID:"vidlink"); fatalError("manual choice silently switched") }
         catch AetherStreamError.invalidResponse { checks += 1 }
+        let routes = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath:"Tests/Fixtures/aether-native-routes.json"))) as! [String:[String:String]]
+        for (server,kinds) in routes {
+            for (kind,expected) in kinds {
+                let contract = AetherStreamClient.contracts[server]!
+                let template = kind == "movie" ? contract.movie : contract.tv
+                let actual = template.replacingOccurrences(of:"{id}",with:kind == "movie" ? "354912" : "1399").replacingOccurrences(of:"{season}",with:"1").replacingOccurrences(of:"{episode}",with:"1")
+                check(actual == expected,"native route matches captured Aether request: " + server + " " + kind)
+            }
+        }
+        check(AetherStreamClient.servers.count == 22, "all 22 active Aether sources are represented")
+        for server in AetherStreamClient.servers where server.id != "vidlink" && server.id != "animetsu" {
+            let client = AetherStreamClient(transport: { request in
+                let body: String
+                if request.url!.path.hasSuffix("/servers") { body = #"{"servers":[{"name":"secondary"}]}"# }
+                else { body = #"{"status":200,"stream":"https://cdn.example/test.m3u8","url":"https://cdn.example/test.m3u8","streams":[{"host":"vidzy","url":"https://cdn.example/test.m3u8"}],"subtitles":[{"file":"https://cdn.example/en.vtt","label":"English"}]}"# }
+                return (Data(body.utf8),HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!)
+            })
+            let result = try await client.resolve(mediaType:server.id == "poyraz" ? "tv" : "movie", id:354912, season:1,episode:1,serverID:server.id)
+            check(result.serverID == server.id && !result.variants.isEmpty, "native adapter resolves " + server.id)
+        }
+        let anime = AetherStreamClient(transport: { request in
+            let host = request.url!.host!
+            let body: String
+            if host == "api.themoviedb.org" { body = #"{"name":"One Piece","first_air_date":"1999-10-20"}"# }
+            else if host == "graphql.anilist.co" { body = #"{"data":{"Page":{"media":[{"id":21,"seasonYear":1999,"title":{"english":"One Piece"}}]}}}"# }
+            else {
+                check(request.url!.query!.contains("id=21") && request.url!.query!.contains("num=1"), "Animetsu resolves confirmed AniList ID and episode")
+                check(request.value(forHTTPHeaderField:"Authorization") == nil && !request.url!.absoluteString.contains("api_key"), "TMDB credential does not reach anime backend")
+                body = #"{"sources":[{"url":"https://cdn.example/anime.m3u8"}]}"#
+            }
+            return (Data(body.utf8),HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!)
+        },metadataCredential:{String(repeating:"a",count:32)})
+        let animeResult = try await anime.resolve(mediaType:"tv",id:37854,season:1,episode:1,serverID:"animetsu")
+        check(animeResult.serverID == "animetsu", "Animetsu native metadata and embed sequence")
         print("PASS: \(checks) native Aether stream/token/transport checks")
     }
 }
