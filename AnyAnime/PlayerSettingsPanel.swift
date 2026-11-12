@@ -78,6 +78,8 @@ struct PlayerSettingsPanel: View {
         switch tab {
         case "servers":
             heading("Nguồn phát")
+            if playback.serverLoading { ProgressView("Đang tìm luồng…").tint(.white) }
+            if let message = playback.serverMessage { Text(message).font(.footnote).foregroundStyle(.secondary) }
             trackList(playback.servers, kind: "server", selected: playback.server)
             Text("Khi nguồn tự động bị lỗi, ứng dụng thử nguồn dự phòng. Bạn cũng có thể chọn nguồn trực tiếp tại đây.")
                 .font(.caption).foregroundStyle(.secondary)

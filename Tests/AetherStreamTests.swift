@@ -58,12 +58,12 @@ import FoundationNetworking
             check(request.value(forHTTPHeaderField:"Authorization") == nil, "metadata credential leaked to stream host")
             return (fixture,HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!)
         }, now:{ date })
-        let resolved = try await client.resolve(mediaType:"movie",id:550,season:nil,episode:nil)
+        let resolved = try await client.resolve(mediaType:"movie",id:550,season:nil,episode:nil,serverID:"vidlink")
         check(resolved == decoded, "native transport result")
         let denied = AetherStreamClient(transport:{ request in
             (Data(),HTTPURLResponse(url:request.url!,statusCode:403,httpVersion:nil,headerFields:nil)!)
         })
-        do { _ = try await denied.resolve(mediaType:"movie",id:550,season:nil,episode:nil); fatalError("HTTP failure accepted") }
+        do { _ = try await denied.resolve(mediaType:"movie",id:550,season:nil,episode:nil,serverID:"vidlink"); fatalError("HTTP failure accepted") }
         catch AetherStreamError.rejected(403) { checks += 1 }
         do { _ = try await client.resolve(mediaType:"movie",id:550,season:nil,episode:nil,serverID:"fake"); fatalError("fake server accepted") }
         catch AetherStreamError.unsupportedServer { checks += 1 }
@@ -73,11 +73,11 @@ import FoundationNetworking
         check(ly.variants[0].headers["Referer"] == "https://vidly.pro/movie/354912", "Ly upstream proxyHeaders preserved for native requests")
         check(ly.captions.first?.language == "en", "Ly captions normalize for native selection")
         let fallback = AetherStreamClient(transport: { request in
-            let body = request.url!.host == "vidlink.pro" ? "null" : #"{"stream":"https://cdn.example/coco.m3u8"}"#
+            let body = request.url!.host == "ly.raccoonunbutteredbagel.zip" ? #"{"stream":"https://cdn.example/coco.m3u8"}"# : "null"
             return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode:200, httpVersion:nil, headerFields:nil)!)
         })
         let recovered = try await fallback.resolve(mediaType:"movie",id:354912,season:nil,episode:nil)
-        check(recovered.serverID == "ly", "malformed KingLink response falls through to Ly")
+        check(recovered.serverID == "ly", "Aether ranked sources fall through to Ly")
         do { _ = try await fallback.resolve(mediaType:"movie",id:354912,season:nil,episode:nil,serverID:"vidlink"); fatalError("manual choice silently switched") }
         catch AetherStreamError.invalidResponse { checks += 1 }
         let routes = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath:"Tests/Fixtures/aether-native-routes.json"))) as! [String:[String:String]]
@@ -89,6 +89,7 @@ import FoundationNetworking
                 check(actual == expected,"native route matches captured Aether request: " + server + " " + kind)
             }
         }
+        check(Array(AetherStreamClient.servers.prefix(4)).map(\.id) == ["lul", "nebula", "lil", "ly"], "Aether default ranked source order")
         check(AetherStreamClient.servers.count == 22, "all 22 active Aether sources are represented")
         for server in AetherStreamClient.servers where server.id != "vidlink" && server.id != "animetsu" {
             let client = AetherStreamClient(transport: { request in

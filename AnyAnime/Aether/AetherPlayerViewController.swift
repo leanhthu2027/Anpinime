@@ -116,6 +116,8 @@ final class AetherPlayerViewController: UIViewController {
                 try await self.finishPiPBeforeReplacement()
                 guard self.live, case .aether(let type, let id, let season, let number) = self.episode.playback else { return }
                 self.playback.loading = true; self.playback.error = nil
+                self.playback.serverLoading = true
+                self.playback.serverMessage = serverID.flatMap { id in AetherStreamClient.servers.first { $0.id == id }?.name }.map { "Đang tìm " + $0 + "…" } ?? "Đang tìm nguồn phát…"
                 let result = try await self.streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID, excluding: self.failedServers)
                 try Task.checkCancellation()
                 guard self.live, !self.shutdownRequested, let first = result.variants.first else { throw AetherNativeError.noMedia }
@@ -126,6 +128,7 @@ final class AetherPlayerViewController: UIViewController {
                 self.cancelSubtitleWork(); self.discoveryTask?.cancel()
                 self.generation = UUID(); self.stream = result; self.recovering = false
                 self.playback.server = result.serverID
+                self.playback.serverLoading = false; self.playback.serverMessage = nil
                 self.playback.externalSubtitle = nil; self.playback.externalSubtitles = []
                 self.playback.externalSecondarySubtitle = nil
                 self.playback.subtitleStatus = nil; self.playback.subtitleBusy = false
@@ -140,7 +143,11 @@ final class AetherPlayerViewController: UIViewController {
                 self.discoverSubtitles(type: type, id: id, season: season, number: number)
             } catch {
                 guard self.live, !Task.isCancelled else { return }
-                self.playback.loading = false; self.playback.error = error.localizedDescription
+                self.recovering = false
+                self.playback.loading = false; self.playback.serverLoading = false
+                let label = serverID.flatMap { id in AetherStreamClient.servers.first { $0.id == id }?.name } ?? "Các nguồn"
+                self.playback.serverMessage = label + ": " + error.localizedDescription
+                if self.player == nil { self.playback.error = self.playback.serverMessage }
             }
         }
     }

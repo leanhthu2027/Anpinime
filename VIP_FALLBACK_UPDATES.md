@@ -44,3 +44,19 @@ provider, Anime Home/cache, subtitle, credential, parser, Range and PiP policy
 checks. Additional stream tests cover all adapter IDs, independently recorded
 movie/TV paths, metadata isolation and fallback. Swift syntax parsing passed.
 Apple SDK build, source playback and automatic Home PiP on an iPhone are pending.
+
+## Ranked source follow-up
+
+An earlier build placed KingLink first, contrary to Aether's inspected scraper
+ranks. It now follows descending rank: Lul, Nebula, Lil, Ly, Meridian, Rock,
+Polaris, Aurora, Tiki, Link, Fast, Vidy, language-specific sources, KingLink,
+and Animetsu (filtered by media type). The website can also alter order through
+user-specific source settings, so this records its default ranked order only.
+Selections show a separate loading/error status that decoder polling cannot
+clear, and an error screen now offers a direct server-selection button.
+
+Live Coco diagnosis remains open. KingLink returned JSON null. The Ly endpoint
+and Aether's published proxy hosts returned HTTP 403 in this environment; no
+successful live Ly response or iPhone playback can be claimed. A ProxyPin trace
+from the user's successful web request can identify differences in destination,
+headers or provider response. Never collect or record session tokens or cookies.

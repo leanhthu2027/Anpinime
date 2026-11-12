@@ -42,6 +42,8 @@ final class PlaybackState: ObservableObject {
     @Published var subtitleStyle = SubtitleStyle.load()
     @Published var servers: [PlaybackChoice] = []
     @Published var server = ""
+    @Published var serverMessage: String?
+    @Published var serverLoading = false
     @Published var externalSubtitles: [PlaybackChoice] = []
     @Published var externalSubtitle: String?
     @Published var externalSecondarySubtitle: String?
@@ -64,7 +66,7 @@ final class PlaybackState: ObservableObject {
     func reset() {
         loading = true; buffering = false; playing = false; userPaused = false
         pictureInPictureSupported = false; pictureInPictureActive = false; pictureInPicturePending = false; pictureInPictureError = nil
-        servers = []; server = ""; externalSubtitles = []; externalSubtitle = nil; externalSecondarySubtitle = nil
+        servers = []; server = ""; serverMessage = nil; serverLoading = false; externalSubtitles = []; externalSubtitle = nil; externalSecondarySubtitle = nil
         subtitleStatus = nil; subtitleBusy = false; canTranslateSubtitle = false; translateSubtitle = nil
         currentTime = 0; duration = 0; error = nil; verification = false
         videoWidth = 0; videoHeight = 0
@@ -168,6 +170,9 @@ struct PlayerView: View {
                             Text(ContentDisplayText.sourceLabels(error)).multilineTextAlignment(.center)
                             HStack(spacing: 12) {
                                 Button("Thử phát lại") { retry() }.buttonStyle(.borderedProminent).tint(.anpinimeAccent)
+                                if !playback.servers.isEmpty {
+                                    Button("Chọn máy chủ") { openPanel("servers") }.buttonStyle(.bordered).tint(.white)
+                                }
                                 if availableSeasons.count > 1 {
                                     Button(current.source == .aether ? "Chọn phần" : "Đổi Server") { openPanel("seasons") }.buttonStyle(.bordered).tint(.white)
                                 }
@@ -179,7 +184,7 @@ struct PlayerView: View {
                         Color.black.opacity(0.4).ignoresSafeArea().onTapGesture { closePanel() }
                         HStack {
                             if geometry.size.width > geometry.size.height { Spacer(minLength: 0) }
-                            if ["settings", "audio", "subtitles", "display", "speed", "general", "info"].contains(panel) {
+                            if ["settings", "servers", "audio", "subtitles", "display", "speed", "general", "info"].contains(panel) {
                                 PlayerSettingsPanel(playback: playback, initialTab: panel, title: title, source: ContentDisplayText.sourceLabels(current.season),
                                                     close: closePanel, reload: { closePanel(); retry() })
                                     .frame(width: geometry.size.width > geometry.size.height ? geometry.size.width * 0.5 : geometry.size.width - 24, height: min(geometry.size.height - 24, 620)).padding(12)

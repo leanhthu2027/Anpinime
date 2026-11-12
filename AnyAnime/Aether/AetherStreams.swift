@@ -44,11 +44,10 @@ enum AetherStreamError: LocalizedError {
 /// Contract verified against aether.st's vendor-BbJGwvp8.js on 2026-11-11.
 struct AetherStreamClient {
     static let servers = [
-        AetherStreamServer(id: "vidlink", name: "KingLink 🔥"),
-        AetherStreamServer(id: "ly", name: "Ly 🌸"),
         AetherStreamServer(id: "lul", name: "Lul 👾"),
         AetherStreamServer(id: "nebula", name: "Nebula 🌌"),
         AetherStreamServer(id: "lil", name: "Lil 🐣"),
+        AetherStreamServer(id: "ly", name: "Ly 🌸"),
         AetherStreamServer(id: "meridian", name: "Meridian 🪐"),
         AetherStreamServer(id: "rock", name: "Rock 🪨"),
         AetherStreamServer(id: "polaris", name: "Polaris 🌟"),
@@ -65,6 +64,7 @@ struct AetherStreamClient {
         AetherStreamServer(id: "baguette", name: "Baguette 🇫🇷"),
         AetherStreamServer(id: "poyraz", name: "Poyraz 🇹🇷"),
         AetherStreamServer(id: "yildiz", name: "Yıldız 🇹🇷"),
+        AetherStreamServer(id: "vidlink", name: "KingLink 🔥"),
         AetherStreamServer(id: "animetsu", name: "Animetsu 🏯")
     ]
     typealias Transport = (URLRequest) async throws -> (Data, HTTPURLResponse)
@@ -84,28 +84,12 @@ struct AetherStreamClient {
         if serverID == nil {
             let candidates = Self.servers.filter { Self.supports($0.id, mediaType:mediaType) && !excluding.contains($0.id) }
             var last: Error = AetherStreamError.noStreams
-            let deadline = Date().addingTimeInterval(60)
-            // Preserve the quick preferred path, then race bounded batches.
-            for preferred in candidates.prefix(2) {
-                do { return try await resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:preferred.id) }
+            // Aether's runAll walks sources by descending scraper rank and
+            // selects the first successful source; don't race lower-ranked ones.
+            for source in candidates {
+                try Task.checkCancellation()
+                do { return try await resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:source.id) }
                 catch { try Task.checkCancellation(); last = error }
-            }
-            let remaining = Array(candidates.dropFirst(2))
-            for start in stride(from:0,to:remaining.count,by:4) {
-                try Task.checkCancellation()
-                guard Date() < deadline else { break }
-                let batch = Array(remaining[start..<min(start+4,remaining.count)])
-                let found = await withTaskGroup(of: AetherStream?.self) { group -> AetherStream? in
-                    for server in batch {
-                        group.addTask { try? await self.resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:server.id) }
-                    }
-                    for await result in group {
-                        if let result { group.cancelAll(); return result }
-                    }
-                    return nil
-                }
-                try Task.checkCancellation()
-                if let found { return found }
             }
             throw last
         }
