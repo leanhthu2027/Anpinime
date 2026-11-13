@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -24,14 +27,18 @@ struct AetherStreamCaption: Identifiable, Equatable {
 }
 struct AetherStream: Equatable {
     let serverID: String
-    let variants: [AetherMediaVariant]
+    var variants: [AetherMediaVariant]
     let captions: [AetherStreamCaption]
     var fallbackVariants: [AetherMediaVariant] = []
+    var serverOptions: [AetherStreamServer] = []
+    var serverOption: String?
+    var actualServerOption: String?
 }
 enum AetherStreamError: LocalizedError {
-    case invalidMedia, unsupportedServer, rejected(Int), invalidResponse, noStreams
+    case invalidMedia, unsupportedServer, rejected(Int), invalidResponse, noStreams, protectedStream
     var errorDescription: String? {
         switch self {
+        case .protectedStream: return "Luồng này yêu cầu DRM chưa được trình phát hỗ trợ. Hãy chọn nguồn khác."
         case .invalidMedia: return "Thông tin phim hoặc tập không hợp lệ."
         case .unsupportedServer: return "Máy chủ Aether này chưa được hỗ trợ."
         case .rejected(let code): return "Máy chủ Aether trả lỗi HTTP \(code). Hãy thử lại sau."
@@ -51,8 +58,8 @@ struct AetherStreamClient {
         AetherStreamServer(id: "ly", name: "Ly 🌸"),
         AetherStreamServer(id: "meridian", name: "Meridian 🪐"),
         AetherStreamServer(id: "rock", name: "Rock 🪨"),
-        AetherStreamServer(id: "polaris", name: "Polaris 🌟"),
-        AetherStreamServer(id: "aurora", name: "Aurora 💫"),
+        AetherStreamServer(id: "polaris", name: "Shore · Polaris 🌟"),
+        AetherStreamServer(id: "aurora", name: "Tik · Aurora 💫"),
         AetherStreamServer(id: "tiki", name: "Tiki 🗿"),
         AetherStreamServer(id: "link", name: "Link 🔗"),
         AetherStreamServer(id: "vidfast", name: "Fast (4K) ⚡"),
@@ -65,9 +72,13 @@ struct AetherStreamClient {
         AetherStreamServer(id: "baguette", name: "Baguette 🇫🇷"),
         AetherStreamServer(id: "poyraz", name: "Poyraz 🇹🇷"),
         AetherStreamServer(id: "yildiz", name: "Yıldız 🇹🇷"),
-        AetherStreamServer(id: "vidlink", name: "KingLink 🔥"),
+        AetherStreamServer(id: "vidlink", name: "VidLink · KingLink 🔥"),
         AetherStreamServer(id: "animetsu", name: "Animetsu 🏯")
     ]
+    // Nine source families; Tik and Tiki are separate endpoints of one family.
+    static let primaryServerIDs = ["lul", "lil", "ly", "meridian", "rock", "polaris", "aurora", "tiki", "vidfast", "vidlink"]
+    static var primaryServers: [AetherStreamServer] { primaryServerIDs.compactMap { id in servers.first { $0.id == id } } }
+    typealias Progress = @MainActor (String) -> Void
     typealias Transport = (URLRequest) async throws -> (Data, HTTPURLResponse)
     let transport: Transport
     let metadataCredential: () -> String?
@@ -85,23 +96,24 @@ struct AetherStreamClient {
         self.now = now
         self.metadataCredential = metadataCredential
     }
-    func resolve(mediaType: String, id: Int, season: Int?, episode: Int?, serverID: String? = nil, excluding: Set<String> = []) async throws -> AetherStream {
+    func resolve(mediaType: String, id: Int, season: Int?, episode: Int?, serverID: String? = nil, excluding: Set<String> = [], serverOption: String? = nil, excludingOptions: Set<String> = [], progress: Progress? = nil) async throws -> AetherStream {
         if serverID == nil {
-            let candidates = Self.servers.filter { Self.supports($0.id, mediaType:mediaType) && !excluding.contains($0.id) }
+            let candidates = Self.primaryServers.filter { Self.supports($0.id, mediaType:mediaType) && !excluding.contains($0.id) }
             var last: Error = AetherStreamError.noStreams
             // Aether's runAll walks sources by descending scraper rank and
             // selects the first successful source; don't race lower-ranked ones.
             for source in candidates {
                 try Task.checkCancellation()
-                do { return try await resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:source.id) }
+                do { return try await resolve(mediaType:mediaType,id:id,season:season,episode:episode,serverID:source.id, excludingOptions: excludingOptions, progress: progress) }
                 catch { try Task.checkCancellation(); last = error }
             }
             throw last
         }
         let server = serverID ?? "vidlink"
         guard Self.servers.contains(where: { $0.id == server }) else { throw AetherStreamError.unsupportedServer }
+        await progress?(Self.servers.first { $0.id == server }!.name)
         if server != "vidlink" {
-            let stream = try await resolveAdditional(server, mediaType: mediaType, id: id, season: season, episode: episode)
+            let stream = try await resolveAdditional(server, mediaType: mediaType, id: id, season: season, episode: episode, serverOption: serverOption, excludingOptions: excludingOptions, progress: progress)
             return server == "vidfast" ? stream : try await playable(stream)
         }
         let url = try Self.requestURL(mediaType: mediaType, id: id, season: season, episode: episode, now: now())
@@ -140,10 +152,12 @@ struct AetherStreamClient {
                 guard Self.isMediaPrefix(data) else { throw AetherStreamError.invalidResponse }
                 // Keep all untried transports for decoder-level recovery. They
                 // are not quality options and must not appear as duplicate rows.
-                let selected = variant.id.hasPrefix("transport-")
+                let selected = variant.id.hasPrefix("transport-") || stream.fallbackVariants.contains(variant)
                     ? AetherMediaVariant(id: "auto", label: variant.label, url: variant.url, headers: variant.headers, requiresRelay: variant.requiresRelay) : variant
-                return AetherStream(serverID: stream.serverID, variants: [selected] + stream.variants.filter { $0.url != variant.url && !candidates.prefix(index).contains($0) },
-                    captions: stream.captions, fallbackVariants: Array(candidates.dropFirst(index + 1)).filter { !stream.variants.contains($0) })
+                var result = stream
+                result.variants = [selected] + stream.variants.filter { $0.url != variant.url && !candidates.prefix(index).contains($0) }
+                result.fallbackVariants = Array(candidates.dropFirst(index + 1)).filter { !stream.variants.contains($0) }
+                return result
             } catch { try Task.checkCancellation(); last = error }
         }
         throw last
@@ -152,9 +166,19 @@ struct AetherStreamClient {
         let bytes = [UInt8](data.prefix(1024))
         let text = String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}")))
         if text.hasPrefix("#EXTM3U") { return true }
+        if isDASH(data) { return true }
         if bytes.count >= 12, String(decoding: bytes[4..<8], as: UTF8.self) == "ftyp" { return true }
         if bytes.starts(with: [0x1a, 0x45, 0xdf, 0xa3]) { return true } // Matroska/WebM
         return bytes.count > 376 && bytes[0] == 0x47 && bytes[188] == 0x47 && bytes[376] == 0x47
+    }
+
+    static func isDASH(_ data: Data) -> Bool {
+        let inspector = AetherDASHInspector()
+        let parser = XMLParser(data: data)
+        parser.shouldResolveExternalEntities = false
+        parser.delegate = inspector
+        let complete = parser.parse()
+        return complete && inspector.isComplete && inspector.isMPD && !inspector.protected
     }
 
     static let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -193,7 +217,7 @@ struct AetherStreamClient {
         var variants: [AetherMediaVariant] = []
         if stream["type"] as? String == "file", let qualities = stream["qualities"] as? [String: [String: Any]] {
             for (quality, entry) in qualities {
-                guard entry["type"] as? String == "mp4", let url = safeURL(entry["url"] as? String) else { continue }
+                guard ["mp4", "hls", "dash"].contains(entry["type"] as? String ?? ""), let url = safeURL(entry["url"] as? String) else { continue }
                 var variantHeaders = headers
                 variantHeaders.merge(cleanHeaders(entry["headers"])) { _, value in value }
                 let label = quality == "4k" ? "4K" : (quality == "unknown" ? "Mặc định" : "\(quality)p")
@@ -201,6 +225,11 @@ struct AetherStreamClient {
             }
             variants.sort { qualityRank($0.id) > qualityRank($1.id) }
         } else if stream["type"] as? String == "hls", let url = safeURL((stream["playlist"] ?? stream["url"]) as? String) {
+            variants = [AetherMediaVariant(id: "auto", label: "Tự động", url: url, headers: headers)]
+        }
+        if stream["type"] as? String == "dash",
+           let url = safeURL((stream["playlist"] ?? stream["manifest"] ?? stream["url"]) as? String) {
+            guard stream["drm"] == nil || stream["drm"] is NSNull else { throw AetherStreamError.protectedStream }
             variants = [AetherMediaVariant(id: "auto", label: "Tự động", url: url, headers: headers)]
         }
         guard !variants.isEmpty else { throw AetherStreamError.noStreams }
@@ -392,4 +421,22 @@ private final class AetherBoundedRequest: NSObject, URLSessionDataDelegate, @unc
         else if let response { finish(.success((body, response))) }
         else { finish(.failure(AetherStreamError.invalidResponse)) }
     }
+}
+
+private final class AetherDASHInspector: NSObject, XMLParserDelegate {
+    private var depth = 0
+    var isMPD = false
+    var isComplete = false
+    var protected = false
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String]) {
+        let name = elementName.split(separator: ":").last.map(String.init) ?? elementName
+        if depth == 0 { isMPD = name == "MPD"; if !isMPD { parser.abortParsing() } }
+        depth += 1
+        if name == "ContentProtection" { protected = true }
+    }
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName: String?) {
+        depth -= 1
+        if depth == 0 { isComplete = true }
+    }
+    func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) { isComplete = false }
 }

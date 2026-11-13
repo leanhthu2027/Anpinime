@@ -53,7 +53,7 @@ extension AetherStreamClient {
         guard data.count <= 4 * 1024 * 1024, let object = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any] else { throw AetherStreamError.invalidResponse }
         return object
     }
-    func resolveAdditional(_ server: String, mediaType: String, id: Int, season: Int?, episode: Int?) async throws -> AetherStream {
+    func resolveAdditional(_ server: String, mediaType: String, id: Int, season: Int?, episode: Int?, serverOption: String? = nil, excludingOptions: Set<String> = [], progress: Progress? = nil) async throws -> AetherStream {
         _ = try Self.requestURL(mediaType:mediaType,id:id,season:season,episode:episode,now:Date())
         if server == "animetsu" { return try await resolveAnimetsu(mediaType:mediaType,id:id,season:season,episode:episode) }
         guard let config = Self.contracts[server] else { throw AetherStreamError.unsupportedServer }
@@ -63,26 +63,49 @@ extension AetherStreamClient {
         guard let url = Self.safeURL(route) else { throw AetherStreamError.invalidMedia }
         let object = try await json(url)
         if server == "vidfast" {
-            let rows = object["servers"] as? [[String:Any]] ?? []
-            for row in rows.prefix(12) {
+            var seen = Set<String>()
+            let options = (object["servers"] as? [[String:Any]] ?? []).prefix(12).compactMap { row -> AetherStreamServer? in
+                guard let name = row["name"] as? String, !name.isEmpty, name.count <= 100, seen.insert(name).inserted else { return nil }
+                return AetherStreamServer(id: name, name: name)
+            }
+            if let serverOption, !options.contains(where: { $0.id == serverOption }) { throw AetherStreamError.unsupportedServer }
+            var last: Error = AetherStreamError.noStreams
+            for option in options where serverOption == option.id || (serverOption == nil && !excludingOptions.contains(option.id)) {
                 try Task.checkCancellation()
-                guard let name = row["name"] as? String else { continue }
+                await progress?("Fast · " + option.name)
                 var parts = URLComponents(url:url.deletingLastPathComponent(),resolvingAgainstBaseURL:false)!
-                parts.queryItems = [.init(name:"server",value:name)]
+                parts.queryItems = [.init(name:"server",value:option.id)]
                 do {
                     let value = try await json(parts.url!)
-                    return try await playable(withMediaFallbacks(try Self.decodeAdditional(value,server:server,headers:[:],baseURL:parts.url)))
-                } catch { try Task.checkCancellation() }
+                    var result = try Self.decodeAdditional(value,server:server,headers:[:],baseURL:parts.url)
+                    result = withMediaFallbacks(result)
+                    result.serverOptions = options; result.serverOption = option.id
+                    result.actualServerOption = value["actualServer"] as? String ?? value["server"] as? String ?? option.id
+                    return try await playable(result)
+                } catch { try Task.checkCancellation(); last = error }
             }
-            throw AetherStreamError.noStreams
+            throw last
         }
-        return withMediaFallbacks(try Self.decodeAdditional(object,server:server,headers:config.headers,baseURL:url))
+        var headers = config.headers
+        if ["lul", "lil"].contains(server) {
+            headers["Origin"] = apiHeaders["Origin"]; headers["Referer"] = apiHeaders["Referer"]
+        }
+        return withMediaFallbacks(try Self.decodeAdditional(object,server:server,headers:headers,baseURL:url))
     }
     static func decodeAdditional(_ object: [String:Any], server: String, headers: [String:String], baseURL: URL? = nil) throws -> AetherStream {
         guard object["error"] as? [String:Any] == nil, object["error"] as? Bool != true, (object["error"] as? String)?.isEmpty != false, object["success"] as? Bool != false else { throw AetherStreamError.noStreams }
         if server.hasPrefix("aether-"), (object["status"] as? Int) != 200 { throw AetherStreamError.noStreams }
+        var object = object
+        // Lil returns {stream:{url:...}}; Ly also supports that shape. It is a
+        // transport wrapper, not the KingLink {stream:{type,qualities}} schema.
+        if let nested = object["stream"] as? [String:Any] {
+            object["stream"] = nested["url"] ?? nested["playlist"]
+            var merged = cleanHeaders(object["proxyHeaders"])
+            merged.merge(cleanHeaders(nested["headers"])) { _, new in new }
+            object["proxyHeaders"] = merged
+        }
         var candidates = [String]()
-        for key in ["stream","stream_url","url"] { if let value = object[key] as? String { candidates.append(value) } }
+        for key in ["stream","stream_url","url","directUrl"] { if let value = object[key] as? String { candidates.append(value) } }
         var rows = (object["streams"] as? [[String:Any]] ?? []) + (object["sources"] as? [[String:Any]] ?? [])
         if server == "baguette" { rows = rows.filter { ($0["host"] as? String)?.lowercased() == "vidzy" } }
         candidates += rows.compactMap { $0["url"] as? String }
@@ -92,15 +115,33 @@ extension AetherStreamClient {
             if let absolute = Self.safeURL(raw) { return absolute }
             // Keep signed relative URLs intact; never strip the proxy token or
             // invent the origin of the upstream video service.
-            guard raw.hasPrefix("/"), !raw.hasPrefix("//"), let baseURL,
-                  let absolute = URL(string: raw, relativeTo: baseURL)?.absoluteURL else { return nil }
+            guard raw.hasPrefix("/"), !raw.hasPrefix("//"), let baseURL else { return nil }
+            // Shore forwards Vidrift's boot response unchanged, including its
+            // relative /api/proxy/hls route. That route belongs to Vidrift, not
+            // to Shore's extraction API (which returns 404 for /api/proxy).
+            let origin = server == "polaris" && raw.hasPrefix("/api/proxy/")
+                ? URL(string: "https://embed.vidrift.net/")! : baseURL
+            guard let absolute = URL(string: raw, relativeTo: origin)?.absoluteURL else { return nil }
             return Self.safeURL(absolute.absoluteString)
         }
         let media = candidates.compactMap(mediaURL).filter { seen.insert($0).inserted }
         guard !media.isEmpty else { throw AetherStreamError.noStreams }
         var mediaHeaders = ["User-Agent": Self.userAgent]
         mediaHeaders.merge(headers) { _,new in new }
+        if server == "polaris", media.contains(where: { $0.host == "embed.vidrift.net" }) {
+            mediaHeaders["Origin"] = "https://embed.vidrift.net"; mediaHeaders["Referer"] = "https://embed.vidrift.net/"
+        }
         mediaHeaders.merge(Self.cleanHeaders(object["proxyHeaders"])) { _,new in new }
+        if server == "vidfast" {
+            // The actual API's referer can be vidup.to, not vidcore.io. Never
+            // guess a constant from the server label or mix proxy/media headers.
+            if object["noReferrer"] as? Bool != true, let referer = safeURL(object["referer"] as? String), let host = referer.host {
+                mediaHeaders["Referer"] = referer.absoluteString
+                mediaHeaders["Origin"] = "https://" + host
+            } else {
+                mediaHeaders.removeValue(forKey:"Referer"); mediaHeaders.removeValue(forKey:"Origin")
+            }
+        }
         if ["meridian","yildiz"].contains(server), let first = media.first, let host = first.host {
             mediaHeaders["Origin"] = "https://" + host; mediaHeaders["Referer"] = "https://" + host + "/"
         }
@@ -117,10 +158,19 @@ extension AetherStreamClient {
         let variants = media.enumerated().map { index,url in
             let row = rows.first { ($0["url"] as? String).flatMap(mediaURL) == url }
             var variantHeaders = mediaHeaders
+            if ["just.raccoonunbutteredbagel.zip", "justice.raccoonunbutteredbagel.zip"].contains(url.host ?? "") {
+                // The proxy query already carries CDN headers; its own request
+                // gets the page context later, in withMediaFallbacks.
+                variantHeaders = [:]
+            }
             variantHeaders.merge(cleanHeaders(row?["headers"])) { _, new in new }
             variantHeaders.merge(cleanHeaders(row?["proxyHeaders"])) { _, new in new }
             let label = row?["quality"] as? String ?? "Luồng \(index + 1)"
-            return AetherMediaVariant(id:index == 0 ? "auto" : server + "-\(index)",label:label,url:url,headers:variantHeaders,requiresRelay:server == "rock")
+            return AetherMediaVariant(id:index == 0 ? "auto" : server + "-\(index)",label:label,url:url,headers:variantHeaders,requiresRelay:["rock", "aurora", "tiki"].contains(server))
+        }
+        if server == "vidfast" {
+            // Proxy and directUrl represent the same encode, not two qualities.
+            return AetherStream(serverID:server,variants:Array(variants.prefix(1)),captions:parsed.captions,fallbackVariants:Array(variants.dropFirst()))
         }
         return AetherStream(serverID:server,variants:variants,captions:parsed.captions)
     }
@@ -128,13 +178,20 @@ extension AetherStreamClient {
     /// direct native transport fails, keeping the original per-CDN headers in
     /// the proxy query and Aether headers on the outer request.
     func withMediaFallbacks(_ stream: AetherStream) -> AetherStream {
-        let proxiedSources: Set<String> = ["ly", "rock", "polaris", "aurora", "tiki", "link", "vidy", "meridian", "yildiz"]
+        let proxiedSources: Set<String> = ["ly", "rock", "polaris", "aurora", "tiki", "link", "vidy", "meridian", "yildiz", "vidfast"]
         guard proxiedSources.contains(stream.serverID) else { return stream }
         var result = stream
         for variant in stream.variants {
             // A relative provider proxy stays on its own origin. HTTP 200 from
             // extraction alone never establishes that this route is playable.
-            for (index, host) in ["just.raccoonunbutteredbagel.zip", "justice.raccoonunbutteredbagel.zip"].enumerated() {
+            let proxyHosts = ["just.raccoonunbutteredbagel.zip", "justice.raccoonunbutteredbagel.zip"]
+            if proxyHosts.contains(variant.url.host ?? "") {
+                var alternate = URLComponents(url: variant.url, resolvingAgainstBaseURL: false)!
+                alternate.host = proxyHosts.first { $0 != variant.url.host }
+                result.fallbackVariants.append(.init(id: "transport-" + variant.id, label: variant.label, url: alternate.url!, headers: apiHeaders, requiresRelay: variant.requiresRelay))
+                continue
+            }
+            for (index, host) in proxyHosts.enumerated() {
                 guard let data = try? JSONSerialization.data(withJSONObject: variant.headers, options: [.sortedKeys]),
                       let encodedHeaders = String(data: data, encoding: .utf8) else { continue }
                 var url = URLComponents(string: "https://" + host + "/m3u8-proxy")!
@@ -143,10 +200,11 @@ extension AetherStreamClient {
             }
         }
         let variants = stream.variants.map { variant in
-            Self.contracts.values.contains(where: { URL(string: $0.movie)?.host == variant.url.host })
+            (Self.contracts.values.contains(where: { URL(string: $0.movie)?.host == variant.url.host }) || ["just.raccoonunbutteredbagel.zip", "justice.raccoonunbutteredbagel.zip"].contains(variant.url.host ?? ""))
                 ? AetherMediaVariant(id: variant.id, label: variant.label, url: variant.url, headers: apiHeaders, requiresRelay: variant.requiresRelay) : variant
         }
-        return AetherStream(serverID: stream.serverID, variants: variants, captions: stream.captions, fallbackVariants: result.fallbackVariants)
+        result.variants = variants
+        return result
     }
 
     private func resolveAnimetsu(mediaType: String, id: Int, season: Int?, episode: Int?) async throws -> AetherStream {

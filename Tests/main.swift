@@ -79,6 +79,7 @@ check(FilmMediaTransform.unwrap(invalidRock) == invalidRock, "invalid TS packet 
 check(Phim4KRelayNaming.suffix(for: URL(string:"https://media.example/seg/opaque")!,transportStreamEnvelope:true) == "ts", "Rock opaque segments get a demuxer-compatible suffix")
 check(Phim4KRelayNaming.suffix(for: URL(string:"https://media.example/seg/opaque")!) == "bin", "existing source naming remains unchanged")
 check(Phim4KRelayNaming.suffix(for: URL(string:"https://proxy.example/m3u8-proxy?url=https%3A%2F%2Fmedia.example%2Fmaster.m3u8")!,transportStreamEnvelope:true) == "m3u8", "proxied HLS keeps playlist suffix")
+check(Phim4KRelayNaming.suffix(for: URL(string:"https://tik2.1x2.space/content/opaque")!, transportStreamEnvelope:true) == "ts", "Tik extensionless wrapped segments receive TS suffix")
 let playlist = "#EXTM3U\n#EXT-X-MAP:URI=\"init.png\"\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"/a.m3u8\"\nsegment.png\n"
 let rewritten = FilmMediaTransform.playlist(playlist, base: URL(string: "https://films.example/hls/master.m3u8")!) { url in
     URL(string: "http://127.0.0.1:1234/" + url.lastPathComponent)!

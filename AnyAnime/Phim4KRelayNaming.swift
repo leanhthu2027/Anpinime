@@ -14,6 +14,7 @@ enum Phim4KRelayNaming {
                 url = nested
             }
             if url.path.contains("/seg/") || ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) { return "ts" }
+            if url.host?.hasSuffix(".1x2.space") == true && url.path.hasPrefix("/content/") { return "ts" }
         }
         if url.path.contains("/stream/hls") { return "m3u8" }
         let ext = url.pathExtension.lowercased()

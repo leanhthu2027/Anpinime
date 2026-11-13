@@ -121,7 +121,7 @@ import FoundationNetworking
         check(capturedLy.variants[0].headers["User-Agent"]?.contains("Chrome/125") == true, "Ly supplied CDN user agent survives parsing")
         check(capturedLy.variants[0].headers["Origin"] == "https://vidly.pro", "extraction origin never replaces media origin")
         let relative = try AetherStreamClient.decodeAdditional(live["conan_polaris"]!, server: "polaris", headers: [:], baseURL: URL(string: "https://shore.raccoonunbutteredbagel.zip/movie/9387"))
-        check(relative.variants[0].url.host == "shore.raccoonunbutteredbagel.zip" && relative.variants[0].url.path == "/api/proxy/hls", "relative provider route retains its origin")
+        check(relative.variants[0].url.host == "embed.vidrift.net" && relative.variants[0].url.path == "/api/proxy/hls", "Shore relative proxy belongs to its Vidrift upstream, not its extraction host")
         check(relative.variants[0].url.query?.contains("token=REDACTED") == true, "relative signed query is preserved")
         reject("structured source error accepted") { _ = try AetherStreamClient.decodeAdditional(live["coco_lil_error"]!, server: "lil", headers: [:]) }
         let rock = try AetherStreamClient.decodeAdditional(["stream": "https://media.example/master.m3u8"], server: "rock", headers: AetherStreamClient.contracts["rock"]!.headers)
@@ -159,7 +159,7 @@ import FoundationNetworking
         })
         let afterHTML = try await rejectsHTML.resolve(mediaType:"movie",id:354912,season:nil,episode:nil)
         check(afterHTML.serverID == "ly", "bad 200 stream falls through instead of winning source selection")
-        check(attemptedHosts == ["lul", "filler", "lil", "ly"].map { $0 + ".raccoonunbutteredbagel.zip" }, "fallback preserves website rank across extraction and media failures")
+        check(attemptedHosts == ["lul", "lil", "ly"].map { $0 + ".raccoonunbutteredbagel.zip" }, "fallback preserves website rank across extraction and media failures")
         var probeHosts = [String]()
         let proxyFallback = AetherStreamClient(transport: { request in
             let url = request.url!, host = url.host!; probeHosts.append(host)
@@ -184,7 +184,10 @@ import FoundationNetworking
             else if url.host == "vfast.raccoonunbutteredbagel.zip" {
                 let name = URLComponents(url:url,resolvingAgainstBaseURL:false)!.queryItems![0].value!
                 body = try JSONSerialization.data(withJSONObject:["url":"https://cdn.example/" + name + ".m3u8"])
-            } else { body = url.path.contains("broken") ? Data("<html>error</html>".utf8) : hlsPrefix }
+            } else {
+                let target = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems?.first { $0.name == "url" }?.value ?? url.absoluteString
+                body = target.contains("broken") ? Data("<html>error</html>".utf8) : hlsPrefix
+            }
             return (body,HTTPURLResponse(url:url,statusCode:200,httpVersion:nil,headerFields:nil)!)
         })
         let fastResult = try await fast.resolve(mediaType:"movie",id:9387,season:nil,episode:nil,serverID:"vidfast")

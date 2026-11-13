@@ -42,6 +42,8 @@ final class PlaybackState: ObservableObject {
     @Published var subtitleStyle = SubtitleStyle.load()
     @Published var servers: [PlaybackChoice] = []
     @Published var server = ""
+    @Published var serverOptions: [PlaybackChoice] = []
+    @Published var serverOption = ""
     @Published var serverMessage: String?
     @Published var serverLoading = false
     @Published var externalSubtitles: [PlaybackChoice] = []
@@ -66,7 +68,7 @@ final class PlaybackState: ObservableObject {
     func reset() {
         loading = true; buffering = false; playing = false; userPaused = false
         pictureInPictureSupported = false; pictureInPictureActive = false; pictureInPicturePending = false; pictureInPictureError = nil
-        servers = []; server = ""; serverMessage = nil; serverLoading = false; externalSubtitles = []; externalSubtitle = nil; externalSecondarySubtitle = nil
+        servers = []; server = ""; serverOptions = []; serverOption = ""; serverMessage = nil; serverLoading = false; externalSubtitles = []; externalSubtitle = nil; externalSecondarySubtitle = nil
         subtitleStatus = nil; subtitleBusy = false; canTranslateSubtitle = false; translateSubtitle = nil
         currentTime = 0; duration = 0; error = nil; verification = false
         videoWidth = 0; videoHeight = 0

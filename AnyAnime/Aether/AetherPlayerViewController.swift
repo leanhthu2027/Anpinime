@@ -30,6 +30,7 @@ final class AetherPlayerViewController: UIViewController {
     private var generation = UUID()
     private var failedServers = Set<String>()
     private var failedVariants = Set<URL>()
+    private var failedServerOptions = Set<String>()
     private var recovering = false
     private var decoderFailed = false
     private var live = true
@@ -48,7 +49,7 @@ final class AetherPlayerViewController: UIViewController {
         try? AVAudioSession.sharedInstance().setActive(true)
         playback.engine = "mpv"
         if case .aether(let type, _, _, _) = episode.playback {
-            playback.servers = AetherStreamClient.servers.filter { AetherStreamClient.supports($0.id, mediaType:type) }.map { .init(id:$0.id,title:$0.name) }
+            playback.servers = AetherStreamClient.primaryServers.filter { AetherStreamClient.supports($0.id, mediaType:type) }.map { .init(id:$0.id,title:$0.name) }
         }
         playback.command = { [weak self] name, value in self?.player?.perform(name, value: value) }
         playback.chooseOption = { [weak self] kind, id in self?.choose(kind, id: id) }
@@ -109,7 +110,7 @@ final class AetherPlayerViewController: UIViewController {
         }
     }
 
-    private func load(serverID: String?) {
+    private func load(serverID: String?, serverOption: String? = nil) {
         guard live, !shutdownRequested else { return }
         requestTask?.cancel()
         requestTask = Task { [weak self] in
@@ -124,7 +125,11 @@ final class AetherPlayerViewController: UIViewController {
                 let origin = await self.domainTask?.value ?? URL(string: "https://aether.cx/")!
                 try Task.checkCancellation()
                 let streams = AetherStreamClient(pageOrigin: origin)
-                let result = try await streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID, excluding: self.failedServers)
+                let result = try await streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID, excluding: self.failedServers, serverOption: serverOption, excludingOptions: self.failedServerOptions,
+                    progress: { [weak self] name in
+                        guard let self, self.live, !Task.isCancelled else { return }
+                        self.playback.serverMessage = "Đang thử nguồn: " + name + "…"
+                    })
                 try Task.checkCancellation()
                 guard self.live, !self.shutdownRequested, let first = result.variants.first else { throw AetherNativeError.noMedia }
                 // PiP may have started while extraction was waiting on the network.
@@ -134,7 +139,12 @@ final class AetherPlayerViewController: UIViewController {
                 self.cancelSubtitleWork(); self.discoveryTask?.cancel()
                 self.generation = UUID(); self.stream = result; self.recovering = false; self.failedVariants = []
                 self.playback.server = result.serverID
+                self.playback.serverOptions = result.serverOptions.map { .init(id:$0.id,title:$0.name) }
+                self.playback.serverOption = result.serverOption ?? ""
                 self.playback.serverLoading = false; self.playback.serverMessage = nil
+                if let actual = result.actualServerOption, let requested = result.serverOption, actual != requested {
+                    self.playback.serverMessage = "Fast trả về " + actual + " cho lựa chọn " + requested + "."
+                }
                 self.playback.externalSubtitle = nil; self.playback.externalSubtitles = []
                 self.playback.externalSecondarySubtitle = nil
                 self.playback.subtitleStatus = nil; self.playback.subtitleBusy = false
@@ -150,6 +160,11 @@ final class AetherPlayerViewController: UIViewController {
             } catch {
                 guard self.live, !Task.isCancelled else { return }
                 let wasRecovering = self.recovering
+                if wasRecovering && serverID == "vidfast" {
+                    self.failedServers.insert("vidfast")
+                    self.load(serverID: nil)
+                    return
+                }
                 self.recovering = false
                 self.playback.loading = false; self.playback.serverLoading = false
                 let label = serverID.flatMap { id in AetherStreamClient.servers.first { $0.id == id }?.name } ?? "Các nguồn"
@@ -210,8 +225,16 @@ final class AetherPlayerViewController: UIViewController {
                 }
                 return
             }
+            if let stream = self.stream, stream.serverID == "vidfast", let option = stream.serverOption {
+                self.failedServerOptions.insert(option)
+                if stream.serverOptions.contains(where: { !self.failedServerOptions.contains($0.id) }) {
+                    self.recovering = true
+                    self.load(serverID: "vidfast")
+                    return
+                }
+            }
             self.failedServers.insert(self.playback.server)
-            if AetherStreamClient.servers.contains(where: { !self.failedServers.contains($0.id) }) {
+            if AetherStreamClient.primaryServers.contains(where: { !self.failedServers.contains($0.id) }) {
                 self.recovering = true
                 self.load(serverID: nil)
             } else {
@@ -226,7 +249,7 @@ final class AetherPlayerViewController: UIViewController {
         controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(controller.view); controller.didMove(toParent: self)
         restoreSelection(on: controller, time: time)
-        if stream?.variants.count == 1, source.id == "auto", (source.url.pathExtension.lowercased() == "m3u8" || source.url.path.hasSuffix("/m3u8-proxy")) { loadHLSQualities(source, controller: controller) }
+        if stream?.variants.count == 1, (source.url.pathExtension.lowercased() == "m3u8" || source.url.path.hasSuffix("/m3u8-proxy")) { loadHLSQualities(source, controller: controller) }
     }
 
     private func restoreSelection(on controller: MPVPlaybackController, time: Double?) {
@@ -270,9 +293,15 @@ final class AetherPlayerViewController: UIViewController {
 
     private func choose(_ kind: String, id: String) {
         guard live, !shutdownRequested else { return }
+        if kind == "serverOption" {
+            guard stream?.serverID == "vidfast", stream?.serverOptions.contains(where: { $0.id == id }) == true else { return }
+            recovering = false; failedServerOptions.remove(id)
+            load(serverID: "vidfast", serverOption: id); return
+        }
         if kind == "server" {
             guard id != playback.server || decoderFailed || playback.error != nil, AetherStreamClient.servers.contains(where: { $0.id == id }) else { return }
-            failedServers.remove(id)
+            recovering = false; failedServers.remove(id)
+            if id == "vidfast" { failedServerOptions = [] }
             load(serverID: id); return
         }
         if kind == "quality", let stream {

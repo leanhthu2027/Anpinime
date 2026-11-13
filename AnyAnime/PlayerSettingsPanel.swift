@@ -81,6 +81,11 @@ struct PlayerSettingsPanel: View {
             if playback.serverLoading { ProgressView("Đang tìm luồng…").tint(.white) }
             if let message = playback.serverMessage { Text(message).font(.footnote).foregroundStyle(.secondary) }
             trackList(playback.servers, kind: "server", selected: playback.server)
+            if !playback.serverOptions.isEmpty {
+                Divider()
+                heading("Server trong Fast")
+                trackList(playback.serverOptions, kind: "serverOption", selected: playback.serverOption)
+            }
             Text("Khi nguồn tự động bị lỗi, ứng dụng thử nguồn dự phòng. Bạn cũng có thể chọn nguồn trực tiếp tại đây.")
                 .font(.caption).foregroundStyle(.secondary)
         case "audio":

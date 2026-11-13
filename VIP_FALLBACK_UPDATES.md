@@ -1,3 +1,5 @@
+> Follow-up: [nine source families and current evidence](AETHER_NINE_SOURCES.md) supersedes the 22-source roster and earlier Meridian limitation below.
+
 # Native Aether source repair — 2026-11-12
 
 Branch: `feature/vip-fallback-updates`. These changes are **not yet in an IPA**.

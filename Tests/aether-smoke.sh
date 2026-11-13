@@ -21,6 +21,8 @@ python3 Tests/metadata_credentials_test.py
 python3 Tests/metadata_handoff_test.py
 
 "$ANPINIME_SWIFTC" AnyAnime/Aether/AetherMetadataSettings.swift AnyAnime/Aether/AetherStreams.swift AnyAnime/Aether/AetherAdditionalSources.swift Tests/AetherStreamTests.swift -o "$ANPINIME_AETHER_TEMP/streams"
+"$ANPINIME_SWIFTC" AnyAnime/Aether/AetherMetadataSettings.swift AnyAnime/Aether/AetherStreams.swift AnyAnime/Aether/AetherAdditionalSources.swift Tests/AetherNineSourceTests.swift -o "$ANPINIME_AETHER_TEMP/nine-sources"
+"$ANPINIME_AETHER_TEMP/nine-sources"
 "$ANPINIME_AETHER_TEMP/streams"
 "$ANPINIME_SWIFTC" AnyAnime/Aether/AetherSubtitles.swift Tests/AetherSubtitlesTests.swift -o "$ANPINIME_AETHER_TEMP/subtitles"
 "$ANPINIME_AETHER_TEMP/subtitles"

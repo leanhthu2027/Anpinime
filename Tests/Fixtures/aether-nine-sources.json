@@ -1,0 +1,296 @@
+{
+  "lil": {
+    "type": "movie",
+    "id": 238,
+    "stream": {
+      "url": "https://cdn.example/lil/root-stream-url.m3u8"
+    }
+  },
+  "meridian": {
+    "title": "The Godfather",
+    "url": "https://cdn.example/meridian/root-url.m3u8",
+    "subtitles": [
+      {
+        "language": "Arabic",
+        "url": "https://cdn.example/meridian/root-subtitles-0-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Croatian",
+        "url": "https://cdn.example/meridian/root-subtitles-1-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Czech",
+        "url": "https://cdn.example/meridian/root-subtitles-2-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Danish",
+        "url": "https://cdn.example/meridian/root-subtitles-3-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Dutch",
+        "url": "https://cdn.example/meridian/root-subtitles-4-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "English",
+        "url": "https://cdn.example/meridian/root-subtitles-5-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Finnish",
+        "url": "https://cdn.example/meridian/root-subtitles-6-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "French",
+        "url": "https://cdn.example/meridian/root-subtitles-7-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "German",
+        "url": "https://cdn.example/meridian/root-subtitles-8-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Greek",
+        "url": "https://cdn.example/meridian/root-subtitles-9-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Hebrew",
+        "url": "https://cdn.example/meridian/root-subtitles-10-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Hindi",
+        "url": "https://cdn.example/meridian/root-subtitles-11-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Hungarian",
+        "url": "https://cdn.example/meridian/root-subtitles-12-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Icelandic",
+        "url": "https://cdn.example/meridian/root-subtitles-13-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Indonesian",
+        "url": "https://cdn.example/meridian/root-subtitles-14-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Italian",
+        "url": "https://cdn.example/meridian/root-subtitles-15-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Japanese",
+        "url": "https://cdn.example/meridian/root-subtitles-16-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Korean",
+        "url": "https://cdn.example/meridian/root-subtitles-17-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Malay",
+        "url": "https://cdn.example/meridian/root-subtitles-18-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Norwegian",
+        "url": "https://cdn.example/meridian/root-subtitles-19-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Polish",
+        "url": "https://cdn.example/meridian/root-subtitles-20-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Portuguese",
+        "url": "https://cdn.example/meridian/root-subtitles-21-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Portuguese (Brazil)",
+        "url": "https://cdn.example/meridian/root-subtitles-22-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Romanian",
+        "url": "https://cdn.example/meridian/root-subtitles-23-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Russian",
+        "url": "https://cdn.example/meridian/root-subtitles-24-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Simplified Chinese",
+        "url": "https://cdn.example/meridian/root-subtitles-25-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Spanish",
+        "url": "https://cdn.example/meridian/root-subtitles-26-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Spanish (Latin)",
+        "url": "https://cdn.example/meridian/root-subtitles-27-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Swedish",
+        "url": "https://cdn.example/meridian/root-subtitles-28-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Thai",
+        "url": "https://cdn.example/meridian/root-subtitles-29-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Traditional Chinese",
+        "url": "https://cdn.example/meridian/root-subtitles-30-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Turkish",
+        "url": "https://cdn.example/meridian/root-subtitles-31-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Ukrainian",
+        "url": "https://cdn.example/meridian/root-subtitles-32-url.vtt",
+        "type": "vtt"
+      },
+      {
+        "language": "Vietnamese",
+        "url": "https://cdn.example/meridian/root-subtitles-33-url.vtt",
+        "type": "vtt"
+      }
+    ]
+  },
+  "aurora": {
+    "success": true,
+    "title": null,
+    "type": "movie",
+    "tmdb_id": "238",
+    "season": null,
+    "episode": null,
+    "streams": [
+      {
+        "name": "TIK",
+        "url": "https://cdn.example/aurora/root-streams-0-url.m3u8",
+        "type": "hls",
+        "language": "English",
+        "flag": "us"
+      }
+    ]
+  },
+  "fast": {
+    "status": 200,
+    "domain": "vidup.to",
+    "url": "https://justice.raccoonunbutteredbagel.zip/m3u8-proxy?url=https%3A%2F%2Fcdn.example%2Ffast%2Fmaster.m3u8&headers=%7B%22Origin%22%3A%22https%3A%2F%2Fvidup.to%22%2C%22Referer%22%3A%22https%3A%2F%2Fvidup.to%2F%22%7D",
+    "directUrl": "https://cdn.example/fast/root-directUrl.m3u8",
+    "title": "The Godfather",
+    "tmdbId": 238,
+    "poster": "/3bhkrj58Vtu7enYsRolD1fZdja1.jpg",
+    "backdrop": "/tSPT36ZKlP2WVHJLM4cQPLSzv3b.jpg",
+    "server": "Euro",
+    "referer": "https://vidup.to/",
+    "tracks": [
+      {
+        "file": "https://cdn.example/fast/root-tracks-0-file.vtt",
+        "label": "English"
+      }
+    ],
+    "has4k": false,
+    "mp4": false,
+    "noReferrer": false,
+    "servers": [
+      {
+        "name": "Euro",
+        "description": "Original audio"
+      },
+      {
+        "name": "Zenith",
+        "description": "Original audio"
+      },
+      {
+        "name": "Supreme",
+        "description": "Original audio, 4K"
+      },
+      {
+        "name": "Prime",
+        "description": "Original audio, 4K"
+      }
+    ],
+    "proxy": "justice.raccoonunbutteredbagel.zip"
+  },
+  "vidlink": {
+    "sourceId": "mwVault",
+    "stream": {
+      "id": "primary",
+      "type": "file",
+      "qualities": {
+        "360": {
+          "type": "mp4",
+          "url": "https://cdn.example/vidlink/root-stream-qualities-360-url.mp4",
+          "codecName": "hevc",
+          "size": "332405579",
+          "resourceId": "3543660990782922832",
+          "linkType": 2,
+          "se": 0,
+          "ep": 0,
+          "headers": {},
+          "requiresProxy": true
+        },
+        "480": {
+          "type": "mp4",
+          "url": "https://cdn.example/vidlink/root-stream-qualities-480-url.mp4",
+          "codecName": "hevc",
+          "size": "445119176",
+          "resourceId": "3579480055958986600",
+          "linkType": 2,
+          "se": 0,
+          "ep": 0,
+          "headers": {},
+          "requiresProxy": true
+        },
+        "1080": {
+          "type": "mp4",
+          "url": "https://cdn.example/vidlink/root-stream-qualities-1080-url.mp4",
+          "codecName": "hevc",
+          "size": "1761464214",
+          "resourceId": "3003019303655563112",
+          "linkType": 2,
+          "se": 0,
+          "ep": 0,
+          "headers": {},
+          "requiresProxy": true
+        }
+      },
+      "captions": [],
+      "flags": [
+        "cors-allowed"
+      ],
+      "TTL": 3600,
+      "deliveryType": "file"
+    }
+  },
+  "shore_error": {
+    "error": "upstream 403 on proton2 for https://embed.vidrift.net/api/boot/movie/238"
+  }
+}
