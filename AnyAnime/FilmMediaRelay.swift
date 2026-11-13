@@ -19,6 +19,7 @@ final class FilmMediaRelay {
     private let origin: URL
     private let headers: [String: String]
     private let preserveMediaExtensions: Bool
+    private let transportStreamEnvelope: Bool
     private let secret = UUID().uuidString
     private let queue = DispatchQueue(label: "AnPinime.FilmMediaRelay")
     private let session: URLSession
@@ -31,9 +32,10 @@ final class FilmMediaRelay {
     private var requests: [UUID: Task<Void, Never>] = [:]
     private let mediaCache = NSCache<NSURL, NSData>()
 
-    init(origin: URL, headers: [String: String], preserveMediaExtensions: Bool = false, useSharedCookies: Bool = true) {
+    init(origin: URL, headers: [String: String], preserveMediaExtensions: Bool = false, useSharedCookies: Bool = true, transportStreamEnvelope: Bool = false) {
         self.origin = origin; self.headers = headers
         self.preserveMediaExtensions = preserveMediaExtensions
+        self.transportStreamEnvelope = transportStreamEnvelope
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = useSharedCookies ? .shared : nil
         config.httpShouldSetCookies = useSharedCookies
@@ -90,7 +92,7 @@ final class FilmMediaRelay {
 
     private func localURL(_ url: URL) -> URL {
         if let key = identifiers[url] { return endpoint!.appendingPathComponent(key) }
-        let suffix = preserveMediaExtensions ? Phim4KRelayNaming.suffix(for: url)
+        let suffix = preserveMediaExtensions ? Phim4KRelayNaming.suffix(for: url, transportStreamEnvelope: transportStreamEnvelope)
             : (url.pathExtension == "m3u8" || url.path.hasSuffix("/stream/hls") ? "m3u8" : "bin")
         let key = "\(secret)/\(UUID().uuidString).\(suffix)"
         identifiers[url] = key; urls[key] = url
@@ -167,7 +169,7 @@ final class FilmMediaRelay {
                 type = "application/vnd.apple.mpegurl"
             } else {
                 body = FilmMediaTransform.unwrap(data)
-                type = body.starts(with: Data("WEBVTT".utf8)) ? "text/vtt" : (body != data ? "video/mp4" : http.mimeType ?? "application/octet-stream")
+                type = body.starts(with: Data("WEBVTT".utf8)) ? "text/vtt" : (body != data ? (body.first == 0x47 ? "video/mp2t" : "video/mp4") : http.mimeType ?? "application/octet-stream")
             }
             let rangeHeader = lines.first { $0.lowercased().hasPrefix("range:") }?.dropFirst(6).trimmingCharacters(in: .whitespaces)
             if let rangeHeader {

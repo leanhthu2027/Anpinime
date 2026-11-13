@@ -7,9 +7,9 @@ import AVFoundation
 final class AetherPlayerViewController: UIViewController {
     private let episode: Episode
     private let playback: PlaybackState
-    private let streams = AetherStreamClient()
     private let subtitles = AetherSubtitleClient()
     private var player: MPVPlaybackController?
+    private var mediaRelay: FilmMediaRelay?
     private var stream: AetherStream?
     private var variant: AetherMediaVariant?
     private var captions: [AetherSubtitle] = []
@@ -25,11 +25,13 @@ final class AetherPlayerViewController: UIViewController {
     private var subtitleTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var restoreTask: Task<Void, Never>?
-    private var domainTask: Task<Void, Never>?
+    private var domainTask: Task<URL?, Never>?
     private var qualityTask: Task<Void, Never>?
     private var generation = UUID()
     private var failedServers = Set<String>()
+    private var failedVariants = Set<URL>()
     private var recovering = false
+    private var decoderFailed = false
     private var live = true
     private var shutdownRequested = false
     private var retainedForPiP: AetherPlayerViewController?
@@ -64,9 +66,9 @@ final class AetherPlayerViewController: UIViewController {
         for name in ["AnPinime.sourceWillChange", "AnPinime.libraryWillChange", "AnPinime.playerWillStart"] {
             NotificationCenter.default.addObserver(self, selector: #selector(endExplicitly), name: Notification.Name(name), object: nil)
         }
-        // Keep the existing mirror directory/cache current without delaying media
-        // extraction: Aether's provider APIs use independent media origins.
-        domainTask = Task { _ = try? await AetherDomainResolver.shared.resolve() }
+        // Resolve the page origin once; native extraction must send the same
+        // Origin/Referer context as Aether's browser requests.
+        domainTask = Task { try? await AetherDomainResolver.shared.resolve().origin }
         load(serverID: nil)
     }
 
@@ -87,6 +89,7 @@ final class AetherPlayerViewController: UIViewController {
     @objc private func endExplicitly() { shutdown(force: true) }
 
     private func removePlayer() {
+        mediaRelay?.stop(); mediaRelay = nil
         guard let old = player else { return }
         old.onPictureInPictureEnded = nil; old.onFailure = nil
         old.perform("pause", value: 0)
@@ -118,7 +121,10 @@ final class AetherPlayerViewController: UIViewController {
                 self.playback.loading = true; self.playback.error = nil
                 self.playback.serverLoading = true
                 self.playback.serverMessage = serverID.flatMap { id in AetherStreamClient.servers.first { $0.id == id }?.name }.map { "Đang tìm " + $0 + "…" } ?? "Đang tìm nguồn phát…"
-                let result = try await self.streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID, excluding: self.failedServers)
+                let origin = await self.domainTask?.value ?? URL(string: "https://aether.cx/")!
+                try Task.checkCancellation()
+                let streams = AetherStreamClient(pageOrigin: origin)
+                let result = try await streams.resolve(mediaType: type, id: id, season: season, episode: number, serverID: serverID, excluding: self.failedServers)
                 try Task.checkCancellation()
                 guard self.live, !self.shutdownRequested, let first = result.variants.first else { throw AetherNativeError.noMedia }
                 // PiP may have started while extraction was waiting on the network.
@@ -126,7 +132,7 @@ final class AetherPlayerViewController: UIViewController {
                 try Task.checkCancellation()
                 guard self.live, !self.shutdownRequested else { return }
                 self.cancelSubtitleWork(); self.discoveryTask?.cancel()
-                self.generation = UUID(); self.stream = result; self.recovering = false
+                self.generation = UUID(); self.stream = result; self.recovering = false; self.failedVariants = []
                 self.playback.server = result.serverID
                 self.playback.serverLoading = false; self.playback.serverMessage = nil
                 self.playback.externalSubtitle = nil; self.playback.externalSubtitles = []
@@ -136,40 +142,74 @@ final class AetherPlayerViewController: UIViewController {
                 self.localCaptions = [:]; self.primaryCaptionChosen = false
                 self.captions = result.captions.map { AetherSubtitle(id: "aether:" + $0.id, title: $0.title, language: $0.language, url: $0.url, headers: $0.headers) }
                 self.publishCaptions()
-                self.start(first, time: self.playback.currentTime, quality: "auto")
+                try await self.start(first, time: self.playback.currentTime, quality: "auto")
                 if let preferred = AetherSubtitleClient.preferred(self.captions).first {
                     self.selectCaption(preferred, slot: "subtitles", automatic: true)
                 }
                 self.discoverSubtitles(type: type, id: id, season: season, number: number)
             } catch {
                 guard self.live, !Task.isCancelled else { return }
+                let wasRecovering = self.recovering
                 self.recovering = false
                 self.playback.loading = false; self.playback.serverLoading = false
                 let label = serverID.flatMap { id in AetherStreamClient.servers.first { $0.id == id }?.name } ?? "Các nguồn"
                 self.playback.serverMessage = label + ": " + error.localizedDescription
-                if self.player == nil { self.playback.error = self.playback.serverMessage }
+                if self.player == nil || wasRecovering || self.decoderFailed { self.playback.error = self.playback.serverMessage }
             }
         }
     }
 
-    private func start(_ source: AetherMediaVariant, time: Double, quality: String) {
+    private func start(_ source: AetherMediaVariant, time: Double, quality: String) async throws {
         restoreTask?.cancel(); qualityTask?.cancel()
         removePlayer() // Pauses/detaches the previous decoder before starting another.
         attachedCaptions = [:]
-        variant = source
+        variant = source; decoderFailed = false
         playback.loading = true; playback.error = nil; playback.quality = quality
         playback.audioTracks = []; playback.subtitleTracks = [.init(id: "off", title: "Tắt phụ đề")]
         playback.subtitleTrack = "off"; playback.secondarySubtitleTrack = "off"
         if let stream {
-            playback.qualities = [.automatic] + stream.variants.filter { $0.id != "auto" }.map {
+            playback.qualities = [.automatic] + stream.variants.filter { $0.id != "auto" && !$0.id.hasPrefix("transport-") }.map {
                 PlaybackQuality(id: $0.id, title: $0.label, bandwidth: 0, width: 0, height: 0)
             }
         }
-        let controller = MPVPlaybackController(url: source.url, headers: source.headers, playback: playback)
+        var playbackURL = source.url
+        if source.requiresRelay {
+            let relay = FilmMediaRelay(origin: source.url, headers: source.headers, preserveMediaExtensions: true,
+                                       useSharedCookies: false, transportStreamEnvelope: true)
+            mediaRelay = relay
+            relay.onQualities = { [weak self, weak relay] qualities in
+                guard let self, let relay, self.live, self.mediaRelay === relay else { return }
+                self.playback.qualities = qualities
+            }
+            do { playbackURL = try await relay.start(source.url); try Task.checkCancellation() }
+            catch { relay.stop(); if mediaRelay === relay { mediaRelay = nil }; throw error }
+            guard live, !shutdownRequested else { relay.stop(); throw CancellationError() }
+        }
+        let controller = MPVPlaybackController(url: playbackURL, headers: source.requiresRelay ? [:] : source.headers, playback: playback)
         player = controller
         controller.onFailure = { [weak self, weak controller] message in
             guard let self, self.live, self.player === controller else { return }
-            guard !self.recovering else { return }
+            self.decoderFailed = true
+            guard !self.recovering, !self.playback.serverLoading else { return }
+            self.failedVariants.insert(source.url)
+            if let stream = self.stream, let next = (stream.variants + stream.fallbackVariants).first(where: { !self.failedVariants.contains($0.url) }) {
+                self.recovering = true
+                self.requestTask?.cancel()
+                self.requestTask = Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.finishPiPBeforeReplacement()
+                        try Task.checkCancellation()
+                        guard self.live, !self.shutdownRequested else { return }
+                        self.recovering = false
+                        try await self.start(next, time: self.playback.currentTime, quality: "auto")
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        self.recovering = false; self.playback.error = error.localizedDescription
+                    }
+                }
+                return
+            }
             self.failedServers.insert(self.playback.server)
             if AetherStreamClient.servers.contains(where: { !self.failedServers.contains($0.id) }) {
                 self.recovering = true
@@ -186,7 +226,7 @@ final class AetherPlayerViewController: UIViewController {
         controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(controller.view); controller.didMove(toParent: self)
         restoreSelection(on: controller, time: time)
-        if stream?.variants.count == 1, source.id == "auto", source.url.pathExtension.lowercased() == "m3u8" { loadHLSQualities(source, controller: controller) }
+        if stream?.variants.count == 1, source.id == "auto", (source.url.pathExtension.lowercased() == "m3u8" || source.url.path.hasSuffix("/m3u8-proxy")) { loadHLSQualities(source, controller: controller) }
     }
 
     private func restoreSelection(on controller: MPVPlaybackController, time: Double?) {
@@ -231,7 +271,8 @@ final class AetherPlayerViewController: UIViewController {
     private func choose(_ kind: String, id: String) {
         guard live, !shutdownRequested else { return }
         if kind == "server" {
-            guard id != playback.server, AetherStreamClient.servers.contains(where: { $0.id == id }) else { return }
+            guard id != playback.server || decoderFailed || playback.error != nil, AetherStreamClient.servers.contains(where: { $0.id == id }) else { return }
+            failedServers.remove(id)
             load(serverID: id); return
         }
         if kind == "quality", let stream {
@@ -261,7 +302,7 @@ final class AetherPlayerViewController: UIViewController {
                 do {
                     try await self.finishPiPBeforeReplacement(); try Task.checkCancellation()
                     guard self.live, !self.shutdownRequested else { return }
-                    self.start(choice, time: self.playback.currentTime, quality: id)
+                    try await self.start(choice, time: self.playback.currentTime, quality: id)
                 } catch {
                     if self.live, !Task.isCancelled { self.playback.pictureInPictureError = error.localizedDescription }
                 }

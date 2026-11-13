@@ -1,0 +1,37 @@
+{
+  "coco_ly": {
+    "success": true,
+    "type": "movie",
+    "tmdbId": 354912,
+    "title": "Coco",
+    "year": "2017",
+    "source": {
+      "id": "singularity",
+      "label": "Edge",
+      "tag": "HD"
+    },
+    "quality": "1080p",
+    "stream": "https://cdn.example/coco/index.m3u8",
+    "streamHost": "cdn.example",
+    "proxyHeaders": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Origin": "https://vidly.pro",
+      "Referer": "https://vidly.pro/"
+    }
+  },
+  "conan_polaris": {
+    "type": "movie",
+    "id": 9387,
+    "stream": "/api/proxy/hls?url=https%3A%2F%2Fcdn.example%2Fconan.m3u8&token=REDACTED",
+    "container": "hls"
+  },
+  "coco_lil_error": {
+    "error": {
+      "code": "NO_ALLOWED_SOURCE",
+      "message": "levidia page has no luluvdo source (hosts on page: Wootly)",
+      "hostsOnPage": [
+        "Wootly"
+      ]
+    }
+  }
+}

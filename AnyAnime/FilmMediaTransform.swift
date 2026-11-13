@@ -1,6 +1,6 @@
 import Foundation
 
-/// Film4k's public player removes a complete PNG envelope before decoding media.
+/// Normalize PNG-wrapped media used by Film4k and Aether Rock.
 /// This is container normalization, not DRM/key handling.
 enum FilmMediaTransform {
     static func qualities(_ text: String) -> [PlaybackQuality] {
@@ -29,7 +29,16 @@ enum FilmMediaTransform {
             let length = (0..<4).reduce(0) { ($0 << 8) | Int(data[offset + $1]) }
             guard length <= data.count - offset - 12 else { return data }
             let end = offset + 12 + length
-            if data.subdata(in: offset + 4..<offset + 8) == Data("IEND".utf8) {
+            let kind = data.subdata(in: offset + 4..<offset + 8)
+            // Rock wraps MPEG-TS in a PNG ancillary tsDa chunk, not after IEND.
+            // Require packet boundaries so an ordinary image remains untouched.
+            if kind == Data("tsDa".utf8), length >= 188 * 3, length % 188 == 0 {
+                let start = offset + 8
+                if stride(from: start, to: start + length, by: 188).allSatisfy({ data[$0] == 0x47 }) {
+                    return data.subdata(in: start..<start + length)
+                }
+            }
+            if kind == Data("IEND".utf8) {
                 return end < data.count ? data.subdata(in: end..<data.count) : data
             }
             offset = end

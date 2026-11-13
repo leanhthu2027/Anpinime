@@ -12,6 +12,7 @@ struct AetherMediaVariant: Identifiable, Equatable {
     let label: String
     let url: URL
     let headers: [String: String]
+    var requiresRelay: Bool = false
 }
 struct AetherStreamCaption: Identifiable, Equatable {
     let id: String
@@ -25,6 +26,7 @@ struct AetherStream: Equatable {
     let serverID: String
     let variants: [AetherMediaVariant]
     let captions: [AetherStreamCaption]
+    var fallbackVariants: [AetherMediaVariant] = []
 }
 enum AetherStreamError: LocalizedError {
     case invalidMedia, unsupportedServer, rejected(Int), invalidResponse, noStreams
@@ -39,8 +41,7 @@ enum AetherStreamError: LocalizedError {
     }
 }
 
-/// Native transport for the KingLink source shipped in Aether's live provider
-/// library. No browser, page playback, embedded controls, or HTML media capture.
+/// Native transport for the sources shipped in Aether's live provider library. No browser, page playback, embedded controls, or HTML media capture.
 /// Contract verified against aether.st's vendor-BbJGwvp8.js on 2026-11-11.
 struct AetherStreamClient {
     static let servers = [
@@ -71,12 +72,16 @@ struct AetherStreamClient {
     let transport: Transport
     let metadataCredential: () -> String?
     private let now: () -> Date
-    init(transport: Transport? = nil, metadataCredential: @escaping () -> String? = AetherMetadataSettings.credential, now: @escaping () -> Date = Date.init) {
+    let pageOrigin: URL
+    let verifyMedia: Bool
+    init(pageOrigin: URL = URL(string: "https://aether.cx/")!, verifyMedia: Bool = true, transport: Transport? = nil, metadataCredential: @escaping () -> String? = AetherMetadataSettings.credential, now: @escaping () -> Date = Date.init) {
         self.transport = transport ?? { request in
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let response = response as? HTTPURLResponse else { throw AetherStreamError.invalidResponse }
-            return (data, response)
+            try await AetherBoundedRequest.fetch(request)
         }
+        let host = pageOrigin.host?.lowercased() ?? ""
+        self.pageOrigin = pageOrigin.scheme == "https" && host.range(of: #"^aether\.[a-z]{2,24}$"#, options: .regularExpression) != nil
+            ? URL(string: "https://" + host + "/")! : URL(string: "https://aether.cx/")!
+        self.verifyMedia = verifyMedia
         self.now = now
         self.metadataCredential = metadataCredential
     }
@@ -96,7 +101,8 @@ struct AetherStreamClient {
         let server = serverID ?? "vidlink"
         guard Self.servers.contains(where: { $0.id == server }) else { throw AetherStreamError.unsupportedServer }
         if server != "vidlink" {
-            return try await resolveAdditional(server, mediaType: mediaType, id: id, season: season, episode: episode)
+            let stream = try await resolveAdditional(server, mediaType: mediaType, id: id, season: season, episode: episode)
+            return server == "vidfast" ? stream : try await playable(stream)
         }
         let url = try Self.requestURL(mediaType: mediaType, id: id, season: season, episode: episode, now: now())
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
@@ -109,8 +115,48 @@ struct AetherStreamClient {
         try Task.checkCancellation()
         guard response.statusCode == 200 else { throw AetherStreamError.rejected(response.statusCode) }
         guard data.count <= 4 * 1024 * 1024 else { throw AetherStreamError.invalidResponse }
-        return try Self.decode(data, serverID: server)
+        return try await playable(Self.decode(data, serverID: server))
     }
+    var apiHeaders: [String: String] {
+        ["Origin": String(pageOrigin.absoluteString.dropLast()), "Referer": pageOrigin.absoluteString,
+         "User-Agent": Self.userAgent, "Accept": "application/json, */*;q=0.8"]
+    }
+
+    /// A 200 HTML challenge is not a playable stream. Probe a bounded prefix;
+    /// decoder failures later still advance through the remaining candidates.
+    func playable(_ stream: AetherStream) async throws -> AetherStream {
+        guard verifyMedia else { return stream }
+        var last: Error = AetherStreamError.noStreams
+        let candidates = stream.variants + stream.fallbackVariants
+        for (index, variant) in candidates.enumerated() {
+            try Task.checkCancellation()
+            do {
+                var request = URLRequest(url: variant.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+                variant.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+                request.setValue("bytes=0-65535", forHTTPHeaderField: "Range")
+                let (data, response) = try await transport(request)
+                try Task.checkCancellation()
+                guard [200, 206].contains(response.statusCode) else { throw AetherStreamError.rejected(response.statusCode) }
+                guard Self.isMediaPrefix(data) else { throw AetherStreamError.invalidResponse }
+                // Keep all untried transports for decoder-level recovery. They
+                // are not quality options and must not appear as duplicate rows.
+                let selected = variant.id.hasPrefix("transport-")
+                    ? AetherMediaVariant(id: "auto", label: variant.label, url: variant.url, headers: variant.headers, requiresRelay: variant.requiresRelay) : variant
+                return AetherStream(serverID: stream.serverID, variants: [selected] + stream.variants.filter { $0.url != variant.url && !candidates.prefix(index).contains($0) },
+                    captions: stream.captions, fallbackVariants: Array(candidates.dropFirst(index + 1)).filter { !stream.variants.contains($0) })
+            } catch { try Task.checkCancellation(); last = error }
+        }
+        throw last
+    }
+    static func isMediaPrefix(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(1024))
+        let text = String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}")))
+        if text.hasPrefix("#EXTM3U") { return true }
+        if bytes.count >= 12, String(decoding: bytes[4..<8], as: UTF8.self) == "ftyp" { return true }
+        if bytes.starts(with: [0x1a, 0x45, 0xdf, 0xa3]) { return true } // Matroska/WebM
+        return bytes.count > 376 && bytes[0] == 0x47 && bytes[188] == 0x47 && bytes[376] == 0x47
+    }
+
     static let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     static func requestURL(mediaType: String, id: Int, season: Int?, episode: Int?, now: Date) throws -> URL {
         guard id > 0, mediaType == "movie" || mediaType == "tv" else { throw AetherStreamError.invalidMedia }
@@ -275,5 +321,75 @@ enum AetherProviderToken {
         for i in 0..<4 { let value = packed[i] + word(key,16+i*4) + carry
             output += bytes(UInt32(truncatingIfNeeded: value)); carry = value>>32 }
         return output
+    }
+}
+
+/// Range can be ignored by a CDN. Stop receiving after the probe prefix instead
+/// of downloading a whole film with URLSession.data(for:). JSON has a hard cap.
+private final class AetherBoundedRequest: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>?
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var response: HTTPURLResponse?
+    private var body = Data()
+    private var finished = false
+    private let probe: Bool
+    private let limit: Int
+
+    private init(probe: Bool) { self.probe = probe; self.limit = probe ? 65_536 : 4 * 1024 * 1024 }
+    static func fetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let receiver = AetherBoundedRequest(probe: request.value(forHTTPHeaderField: "Range") != nil)
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { receiver.start(request, continuation: $0) }
+        }, onCancel: { receiver.finish(.failure(CancellationError())) })
+    }
+    private func start(_ request: URLRequest, continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>) {
+        lock.lock()
+        guard !finished else { lock.unlock(); continuation.resume(throwing: CancellationError()); return }
+        self.continuation = continuation
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.timeoutIntervalForResource = request.timeoutInterval
+        let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        self.session = session
+        let task = session.dataTask(with: request); self.task = task
+        lock.unlock()
+        task.resume()
+    }
+    private func finish(_ result: Result<(Data, HTTPURLResponse), Error>) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true
+        let continuation = self.continuation, session = self.session, task = self.task
+        self.continuation = nil; self.session = nil; self.task = nil
+        lock.unlock()
+        task?.cancel(); session?.invalidateAndCancel()
+        continuation?.resume(with: result)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel); finish(.failure(AetherStreamError.invalidResponse)); return
+        }
+        self.response = http
+        if !probe && response.expectedContentLength > Int64(limit) {
+            completionHandler(.cancel); finish(.failure(AetherStreamError.invalidResponse)); return
+        }
+        completionHandler(.allow)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let remaining = max(0, limit - body.count)
+        body.append(contentsOf: data.prefix(remaining))
+        if body.count >= limit {
+            if probe, let response { finish(.success((body, response))) }
+            else { finish(.failure(AetherStreamError.invalidResponse)) }
+        }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error { finish(.failure(error)) }
+        else if let response { finish(.success((body, response))) }
+        else { finish(.failure(AetherStreamError.invalidResponse)) }
     }
 }

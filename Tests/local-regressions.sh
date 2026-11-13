@@ -31,11 +31,13 @@ bash Tests/anime-home-smoke.sh
 "$ANPINIME_CHECK_TEMP/ai-provider"
 
 "$ANPINIME_SWIFTC" AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift Tests/RangeProbeTests.swift -o "$ANPINIME_CHECK_TEMP/range"
+"$ANPINIME_SWIFTC" AnyAnime/Aether/AetherMetadataSettings.swift AnyAnime/Aether/AetherStreams.swift AnyAnime/Aether/AetherAdditionalSources.swift Tests/AetherTransportTests.swift -o "$ANPINIME_CHECK_TEMP/aether-transport"
 ANPINIME_RANGE_PORT=0 ANPINIME_RANGE_READY_FILE="$ANPINIME_CHECK_TEMP/ready.json" python3 -u Tests/range_probe_server.py > "$ANPINIME_CHECK_TEMP/range-server.log" 2>&1 &
 ANPINIME_RANGE_SERVER=$!
 ANPINIME_RANGE_PORT=$(python3 Tests/range_fixture_ready.py --pid "$ANPINIME_RANGE_SERVER" --ready-file "$ANPINIME_CHECK_TEMP/ready.json")
 export ANPINIME_RANGE_PORT
 "$ANPINIME_CHECK_TEMP/range"
+"$ANPINIME_CHECK_TEMP/aether-transport"
 python3 Tests/range_virtual_test.py
 
 # Parsing catches Swift syntax only; it is NOT an Apple SDK typecheck/build.

@@ -40,6 +40,11 @@ extension AetherStreamClient {
         try Task.checkCancellation()
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         request.timeoutInterval = 12
+        // These are extraction headers, not the CDN's media headers. Aether's
+        // browser sends them automatically; native URLSession does not.
+        if Self.contracts.values.contains(where: { URL(string: $0.movie)?.host == url.host || URL(string: $0.tv)?.host == url.host }) {
+            apiHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        }
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json", forHTTPHeaderField:"Content-Type") }
         let (data,response) = try await transport(request)
@@ -66,15 +71,15 @@ extension AetherStreamClient {
                 parts.queryItems = [.init(name:"server",value:name)]
                 do {
                     let value = try await json(parts.url!)
-                    return try Self.decodeAdditional(value,server:server,headers:[:])
+                    return try await playable(withMediaFallbacks(try Self.decodeAdditional(value,server:server,headers:[:],baseURL:parts.url)))
                 } catch { try Task.checkCancellation() }
             }
             throw AetherStreamError.noStreams
         }
-        return try Self.decodeAdditional(object,server:server,headers:config.headers)
+        return withMediaFallbacks(try Self.decodeAdditional(object,server:server,headers:config.headers,baseURL:url))
     }
-    static func decodeAdditional(_ object: [String:Any], server: String, headers: [String:String]) throws -> AetherStream {
-        guard object["error"] as? Bool != true, (object["error"] as? String)?.isEmpty != false, object["success"] as? Bool != false else { throw AetherStreamError.noStreams }
+    static func decodeAdditional(_ object: [String:Any], server: String, headers: [String:String], baseURL: URL? = nil) throws -> AetherStream {
+        guard object["error"] as? [String:Any] == nil, object["error"] as? Bool != true, (object["error"] as? String)?.isEmpty != false, object["success"] as? Bool != false else { throw AetherStreamError.noStreams }
         if server.hasPrefix("aether-"), (object["status"] as? Int) != 200 { throw AetherStreamError.noStreams }
         var candidates = [String]()
         for key in ["stream","stream_url","url"] { if let value = object[key] as? String { candidates.append(value) } }
@@ -83,25 +88,67 @@ extension AetherStreamClient {
         candidates += rows.compactMap { $0["url"] as? String }
         candidates += object["streams"] as? [String] ?? []
         var seen = Set<URL>()
-        let media = candidates.compactMap(Self.safeURL).filter { seen.insert($0).inserted }
+        func mediaURL(_ raw: String) -> URL? {
+            if let absolute = Self.safeURL(raw) { return absolute }
+            // Keep signed relative URLs intact; never strip the proxy token or
+            // invent the origin of the upstream video service.
+            guard raw.hasPrefix("/"), !raw.hasPrefix("//"), let baseURL,
+                  let absolute = URL(string: raw, relativeTo: baseURL)?.absoluteURL else { return nil }
+            return Self.safeURL(absolute.absoluteString)
+        }
+        let media = candidates.compactMap(mediaURL).filter { seen.insert($0).inserted }
         guard !media.isEmpty else { throw AetherStreamError.noStreams }
-        var mediaHeaders = headers
+        var mediaHeaders = ["User-Agent": Self.userAgent]
+        mediaHeaders.merge(headers) { _,new in new }
         mediaHeaders.merge(Self.cleanHeaders(object["proxyHeaders"])) { _,new in new }
         if ["meridian","yildiz"].contains(server), let first = media.first, let host = first.host {
             mediaHeaders["Origin"] = "https://" + host; mediaHeaders["Referer"] = "https://" + host + "/"
         }
         let captions = (object["subtitles"] ?? object["subs"] ?? object["tracks"]) as? [[String:Any]] ?? []
         let normalized: [[String:Any]] = captions.compactMap { row in
-            guard let url = (row["url"] ?? row["file"]) as? String else { return nil }
-            return ["id":url,"url":url,"language":(row["language"] ?? row["label"] ?? row["lang"]) as? String ?? "und", "type":url.lowercased().contains(".srt") ? "srt" : "vtt"]
+            guard let raw = (row["url"] ?? row["file"]) as? String, let url = mediaURL(raw) else { return nil }
+            return ["id":url.absoluteString,"url":url.absoluteString,"language":(row["language"] ?? row["label"] ?? row["lang"]) as? String ?? "und",
+                    "display": (row["label"] ?? row["language"] ?? row["lang"]) as? String ?? "Phụ đề",
+                    "headers": cleanHeaders(row["headers"]),
+                    "type": (row["type"] as? String) ?? (url.pathExtension.lowercased() == "srt" ? "srt" : "vtt")]
         }
         let captionData = try JSONSerialization.data(withJSONObject:["stream":["type":"hls","playlist":media[0].absoluteString,"captions":normalized]])
         let parsed = try Self.decode(captionData,serverID:server)
         let variants = media.enumerated().map { index,url in
-            AetherMediaVariant(id:index == 0 ? "auto" : server + "-\(index)",label:"Luồng \(index + 1)",url:url,headers:mediaHeaders)
+            let row = rows.first { ($0["url"] as? String).flatMap(mediaURL) == url }
+            var variantHeaders = mediaHeaders
+            variantHeaders.merge(cleanHeaders(row?["headers"])) { _, new in new }
+            variantHeaders.merge(cleanHeaders(row?["proxyHeaders"])) { _, new in new }
+            let label = row?["quality"] as? String ?? "Luồng \(index + 1)"
+            return AetherMediaVariant(id:index == 0 ? "auto" : server + "-\(index)",label:label,url:url,headers:variantHeaders,requiresRelay:server == "rock")
         }
         return AetherStream(serverID:server,variants:variants,captions:parsed.captions)
     }
+    /// Same public media proxies configured by Aether. Only use them after a
+    /// direct native transport fails, keeping the original per-CDN headers in
+    /// the proxy query and Aether headers on the outer request.
+    func withMediaFallbacks(_ stream: AetherStream) -> AetherStream {
+        let proxiedSources: Set<String> = ["ly", "rock", "polaris", "aurora", "tiki", "link", "vidy", "meridian", "yildiz"]
+        guard proxiedSources.contains(stream.serverID) else { return stream }
+        var result = stream
+        for variant in stream.variants {
+            // A relative provider proxy stays on its own origin. HTTP 200 from
+            // extraction alone never establishes that this route is playable.
+            for (index, host) in ["just.raccoonunbutteredbagel.zip", "justice.raccoonunbutteredbagel.zip"].enumerated() {
+                guard let data = try? JSONSerialization.data(withJSONObject: variant.headers, options: [.sortedKeys]),
+                      let encodedHeaders = String(data: data, encoding: .utf8) else { continue }
+                var url = URLComponents(string: "https://" + host + "/m3u8-proxy")!
+                url.queryItems = [.init(name: "url", value: variant.url.absoluteString), .init(name: "headers", value: encodedHeaders)]
+                result.fallbackVariants.append(.init(id: "transport-\(variant.id)-\(index)", label: variant.label, url: url.url!, headers: apiHeaders, requiresRelay: variant.requiresRelay))
+            }
+        }
+        let variants = stream.variants.map { variant in
+            Self.contracts.values.contains(where: { URL(string: $0.movie)?.host == variant.url.host })
+                ? AetherMediaVariant(id: variant.id, label: variant.label, url: variant.url, headers: apiHeaders, requiresRelay: variant.requiresRelay) : variant
+        }
+        return AetherStream(serverID: stream.serverID, variants: variants, captions: stream.captions, fallbackVariants: result.fallbackVariants)
+    }
+
     private func resolveAnimetsu(mediaType: String, id: Int, season: Int?, episode: Int?) async throws -> AetherStream {
         guard mediaType == "tv", let episode else { throw AetherStreamError.noStreams }
         guard let credential = metadataCredential() else { throw AetherStreamError.noStreams }

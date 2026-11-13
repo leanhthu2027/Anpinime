@@ -67,6 +67,18 @@ check(FilmMediaTransform.unwrap(pngEnvelope + media) == media, "Complete PNG env
 check(FilmMediaTransform.unwrap(media) == media, "Unwrapped media passes through unchanged")
 check(FilmMediaTransform.unwrap(pngEnvelope) == pngEnvelope, "An ordinary PNG without appended media is not treated as video")
 check(FilmMediaTransform.unwrap(Data(pngEnvelope.prefix(25))) == Data(pngEnvelope.prefix(25)), "Truncated PNG chunks never cause an out-of-bounds read")
+// Rock response has a PNG tsDa chunk containing TS, before PNG IEND.
+var tsPayload = Data(repeating: 0, count: 188 * 3)
+for offset in stride(from: 0, to: tsPayload.count, by: 188) { tsPayload[offset] = 0x47 }
+let pngSignature = Data([137,80,78,71,13,10,26,10])
+let rockEnvelope = pngSignature + Data([0,0,2,52]) + Data("tsDa".utf8) + tsPayload + Data(repeating:0,count:4)
+check(FilmMediaTransform.unwrap(rockEnvelope) == tsPayload, "Rock tsDa PNG chunk yields native TS bytes")
+check(FilmMediaTransform.unwrap(Data(rockEnvelope.dropLast(5))) == Data(rockEnvelope.dropLast(5)), "truncated tsDa is never stripped")
+var invalidRock = rockEnvelope; invalidRock[16 + 188] = 0
+check(FilmMediaTransform.unwrap(invalidRock) == invalidRock, "invalid TS packet sync is not mistaken for video")
+check(Phim4KRelayNaming.suffix(for: URL(string:"https://media.example/seg/opaque")!,transportStreamEnvelope:true) == "ts", "Rock opaque segments get a demuxer-compatible suffix")
+check(Phim4KRelayNaming.suffix(for: URL(string:"https://media.example/seg/opaque")!) == "bin", "existing source naming remains unchanged")
+check(Phim4KRelayNaming.suffix(for: URL(string:"https://proxy.example/m3u8-proxy?url=https%3A%2F%2Fmedia.example%2Fmaster.m3u8")!,transportStreamEnvelope:true) == "m3u8", "proxied HLS keeps playlist suffix")
 let playlist = "#EXTM3U\n#EXT-X-MAP:URI=\"init.png\"\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"/a.m3u8\"\nsegment.png\n"
 let rewritten = FilmMediaTransform.playlist(playlist, base: URL(string: "https://films.example/hls/master.m3u8")!) { url in
     URL(string: "http://127.0.0.1:1234/" + url.lastPathComponent)!
