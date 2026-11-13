@@ -72,3 +72,11 @@ body bytes, so a mislabeled playable manifest is accepted while HTML pages fail.
 - Linux Swift compilation and syntax checks do not typecheck UIKit against the
   Apple SDK or verify iPhone decoding/UI/PiP. A requested IPA build and device
   checks remain necessary. Automatic PiP was not changed or claimed fixed here.
+
+## IPA result
+
+The single authorized light build succeeded. Downloaded IPA identity, checksum,
+libmpv, background audio and private metadata were independently verified.
+See [build 28 record](ANPINIME_VIP_IPA_BUILD_28.md) for the artifact and exact source.
+This closes the Apple compilation check; device playback/PiP limitations above
+still apply.
