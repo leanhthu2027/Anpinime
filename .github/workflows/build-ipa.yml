@@ -1,0 +1,210 @@
+name: Full playback verification (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: 'Capture simulator UI previews'
+        type: boolean
+        default: false
+      ai_drama_only:
+        description: 'Verify the independent Phim AI provider and vertical episode UI'
+        type: boolean
+        default: false
+      shorts_only:
+        description: 'Verify only short-feed gestures, fullscreen and complete-playlist handoff'
+        type: boolean
+        default: false
+
+jobs:
+  build-ios:
+    if: ${{ !inputs.ai_drama_only && !inputs.shorts_only }}
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify offline provider, Aether, player and PiP regressions
+        run: |
+          npm install --prefix "$RUNNER_TEMP/anpinime-js-tests" jsdom@26.1.0 --no-audit --no-fund
+          NODE_PATH="$RUNNER_TEMP/anpinime-js-tests/node_modules" bash Tests/local-regressions.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned iPhone app
+        run: |
+          xcodebuild \
+            -project AnyAnime.xcodeproj \
+            -scheme AnyAnime \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build
+
+      - name: Verify MKV playback, embedded audio and dual subtitles
+        run: |
+          brew install ffmpeg
+          bash Tests/mpv-smoke.sh
+
+      - name: Verify shared HLS through its real relay and mpv
+        run: bash Tests/relay-hls-smoke.sh
+
+      - name: Verify anime dynamic episode list and selected-episode playback
+        run: bash Tests/anime-smoke.sh fixture
+
+      - name: Verify failed anime native handoff restores the same playing WebView
+        run: bash Tests/anime-fallback-smoke.sh
+
+      - name: Check current AnimeVietsub episode list and playback
+        continue-on-error: true
+        run: bash Tests/anime-smoke.sh live
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AnPinime_MPV_Playback_Check
+          path: previews/*
+          retention-days: 14
+
+      - name: Assemble unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/anpinime.app Payload/anpinime.app
+          zip -q -r AnPinime_UNSIGNED.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnPinime_Candidate_UNSIGNED
+          path: AnPinime_UNSIGNED.ipa
+          retention-days: 14
+
+  preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.preview && !inputs.ai_drama_only && !inputs.shorts_only
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Build simulator app
+        run: |
+          xcodebuild -quiet -project AnyAnime.xcodeproj -scheme AnyAnime -configuration Debug -sdk iphonesimulator -derivedDataPath build-simulator CODE_SIGNING_ALLOWED=NO build
+      - name: Capture interface previews
+        run: |
+          ANPINIME_SIMULATOR_ID=$(xcrun simctl list devices available -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const d=Object.values(JSON.parse(s).devices).flat().find(d=>d.name.includes("iPhone")&&d.isAvailable);if(!d)process.exit(1);process.stdout.write(d.udid)})')
+          xcrun simctl boot "$ANPINIME_SIMULATOR_ID"
+          xcrun simctl bootstatus "$ANPINIME_SIMULATOR_ID" -b
+          xcrun simctl install "$ANPINIME_SIMULATOR_ID" build-simulator/Build/Products/Debug-iphonesimulator/anpinime.app
+          xcrun simctl ui "$ANPINIME_SIMULATOR_ID" appearance dark
+          mkdir -p previews
+          python3 Tests/serve_player.py > "$RUNNER_TEMP/anpinime-media-server.log" 2>&1 &
+          ANPINIME_SERVER_PID=$!
+          trap 'kill "$ANPINIME_SERVER_PID"' EXIT
+          ANPINIME_APP_DATA=$(xcrun simctl get_app_container "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime data)
+          for backend in native web film4k; do
+            case "$backend" in
+              native) flag=--playback-smoke ;;
+              web) flag=--web-playback-smoke ;;
+              film4k) flag=--movie-provider-smoke ;;
+            esac
+            xcrun simctl launch --terminate-running-process "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime "$flag"
+            for attempt in $(seq 1 45); do
+              if [ -f "$ANPINIME_APP_DATA/Documents/playback-$backend.json" ]; then break; fi
+              sleep 1
+            done
+            xcrun simctl io "$ANPINIME_SIMULATOR_ID" screenshot "previews/playback-$backend.png"
+            cp "$RUNNER_TEMP/anpinime-media-server.log" previews/fixture-server.log
+            test -f "$ANPINIME_APP_DATA/Documents/playback-$backend.json"
+            cp "$ANPINIME_APP_DATA/Documents/playback-$backend.json" "previews/playback-$backend.json"
+          done
+          for scene in choice movies loading player episodes settings subtitles quality list movie-loading app-settings; do
+            xcrun simctl launch --terminate-running-process "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime --ui-preview "$scene"
+            sleep 7
+            xcrun simctl io "$ANPINIME_SIMULATOR_ID" screenshot "previews/$scene.png"
+          done
+      - name: Check live Film4k playback
+        continue-on-error: true
+        run: |
+          ANPINIME_SIMULATOR_ID=$(xcrun simctl list devices booted -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat()[0].udid))')
+          ANPINIME_APP_DATA=$(xcrun simctl get_app_container "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime data)
+          xcrun simctl launch --terminate-running-process "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime --film4k-live-smoke
+          for attempt in $(seq 1 70); do
+            if [ -f "$ANPINIME_APP_DATA/Documents/playback-film4k-live.json" ]; then break; fi
+            sleep 1
+          done
+          xcrun simctl io "$ANPINIME_SIMULATOR_ID" screenshot previews/film4k-live.png
+          test -f "$ANPINIME_APP_DATA/Documents/playback-film4k-live.json"
+          cp "$ANPINIME_APP_DATA/Documents/playback-film4k-live.json" previews/
+      - name: Record logo transitions
+        if: always()
+        run: |
+          ANPINIME_SIMULATOR_ID=$(xcrun simctl list devices booted -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(Object.values(JSON.parse(s).devices).flat()[0].udid))')
+          mkdir -p previews
+          for scene in intro switch; do
+            xcrun simctl io "$ANPINIME_SIMULATOR_ID" recordVideo --codec=h264 "previews/$scene.mp4" &
+            ANPINIME_RECORD_PID=$!
+            sleep 1
+            xcrun simctl launch --terminate-running-process "$ANPINIME_SIMULATOR_ID" com.xemphim.aipinime --ui-preview "$scene"
+            sleep 4
+            kill -INT "$ANPINIME_RECORD_PID"
+            wait "$ANPINIME_RECORD_PID" || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AnPinime_Interface_Previews
+          path: previews/*
+          retention-days: 14
+
+  ai-drama:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      ANPINIME_AI_DERIVED_DATA: ${{ github.workspace }}/build-ai-simulator
+      ANPINIME_AI_SHORTS_ONLY: ${{ inputs.shorts_only }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify PineDrama data and complete-playlist contracts
+        run: |
+          swiftc AnyAnime/AIDrama/AIDramaModels.swift AnyAnime/AIDrama/PineDramaProvider.swift Tests/AIDramaProviderTests.swift -o "$RUNNER_TEMP/anpinime-ai-drama-provider-tests"
+          "$RUNNER_TEMP/anpinime-ai-drama-provider-tests"
+          swiftc -parse-as-library AnyAnime/AIDrama/AIDramaModels.swift AnyAnime/AIDrama/PineDramaProvider.swift AnyAnime/AIDrama/AIDramaHistoryStore.swift AnyAnime/AIDrama/AIDramaCatalogStore.swift Tests/AIDramaStoreTests.swift -o "$RUNNER_TEMP/anpinime-ai-drama-store-tests"
+          "$RUNNER_TEMP/anpinime-ai-drama-store-tests"
+      - name: Prepare iOS project and test media tools
+        id: ai_prepare
+        run: |
+          brew install xcodegen ffmpeg
+          xcodegen generate
+      - name: Verify five/ten actual AI media downloads and reverse-swipe cache
+        run: bash Tests/ai-cache-smoke.sh
+      - name: Verify actual portrait swipes, full playlist and player lifetime
+        run: bash Tests/ai-drama-smoke.sh
+      - name: Verify live PineDrama catalog, full playlist and first, second and last episodes
+        if: ${{ !inputs.shorts_only && !cancelled() && steps.ai_prepare.outcome == 'success' }}
+        run: bash Tests/ai-drama-live-smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AnPinime_AI_Drama_Verification
+          path: previews/**
+          retention-days: 14
+
+  deliver-ios:
+    name: Publish verified unsigned IPA
+    needs: [build-ios, ai-drama]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AnPinime_Candidate_UNSIGNED
+          path: candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnPinime_UNSIGNED
+          path: candidate/AnPinime_UNSIGNED.ipa
+          if-no-files-found: error
+          retention-days: 14
