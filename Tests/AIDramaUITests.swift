@@ -97,13 +97,18 @@ final class AIDramaUITests: XCTestCase {
         guard try requirePlayerState().piPSupported == true else {
             throw XCTSkip("AVKit system PiP is unsupported on this simulator. Software-frame and restore checks run separately; physical iPhone automatic PiP still needs confirmation.")
         }
-        try waitFor("PiP is eligible before the first Home exit", timeout: 15) {
-            self.playerState()?.piPPrepared == true && self.playerState()?.piPPossible == true
-        }
         let prepared = try requirePlayerState()
         for cycle in 1...2 {
-            let starts = try requirePlayerState().systemPiPStartCount ?? 0
-            let stops = try requirePlayerState().systemPiPStopCount ?? 0
+            try waitFor("The visible inline source is ready before Home exit \(cycle)", timeout: 15) {
+                guard let state = self.playerState() else { return false }
+                return state.piPPrepared == true && state.piPPossible == true
+                    && state.nativeVideoOutput == "libmpv" && state.playing == true && !state.manuallyPaused
+                    && state.piPActive == false && state.piPPending == false
+                    && state.controllerIdentity == prepared.controllerIdentity && state.ownedPlayers == 1
+            }
+            let beforeHome = try requirePlayerState()
+            let starts = beforeHome.systemPiPStartCount ?? 0
+            let stops = beforeHome.systemPiPStopCount ?? 0
             XCUIDevice.shared.press(.home)
             try waitFor("The playing app enters background") {
                 self.app.state == .runningBackground || self.app.state == .runningBackgroundSuspended
@@ -115,11 +120,21 @@ final class AIDramaUITests: XCTestCase {
                 guard let state = self.playerState() else { return false }
                 return state.selectedEpisodeID == self.episodeID(1) && state.controllerIdentity == prepared.controllerIdentity
                     && state.ownedPlayers == 1 && state.playerCreations == prepared.playerCreations
-                    && state.playing == true && state.piPActive == false && state.piPPending == false
-                    && state.nativeVideoOutput == "gpu-next"
+                    && state.playing == true && !state.manuallyPaused
+                    && state.piPActive == false && state.piPPending == false
+                    && state.nativeVideoOutput == "libmpv" && state.piPPrepared == true
+                    && state.currentTime > beforeHome.currentTime + 0.25
                     && (state.systemPiPStartCount ?? 0) > starts
                     && (state.systemPiPStopCount ?? 0) > stops
                     && self.app.frame.width < self.app.frame.height
+            }
+            let restoredTime = try requirePlayerState().currentTime
+            try waitFor("The progress clock continues advancing after PiP restoration") {
+                guard let state = self.playerState() else { return false }
+                return state.currentTime > restoredTime + 0.5 && state.playing == true && !state.manuallyPaused
+                    && state.controllerIdentity == prepared.controllerIdentity && state.ownedPlayers == 1
+                    && state.playerCreations == prepared.playerCreations
+                    && state.piPActive == false && state.piPPending == false
             }
             capture("automatic-pip-after-reactivation-\(cycle)")
         }
@@ -129,6 +144,7 @@ final class AIDramaUITests: XCTestCase {
     func testTransientInactiveDoesNotStartPiPOrReplacePlayer() throws {
         try openFixtureSeries()
         try waitForPlaying(episode: 1)
+        try waitForInlineRenderer()
         let original = try requirePlayerState()
         for paused in [false, true] {
             if paused { app.buttons["aidrama.playpause"].tap() }
@@ -140,7 +156,9 @@ final class AIDramaUITests: XCTestCase {
                 return state.sceneActive == false && state.sceneInBackground == false
                     && state.ownedPlayers == 1 && state.controllerIdentity == original.controllerIdentity
                     && state.playerCreations == original.playerCreations && state.manuallyPaused == paused
-                    && state.piPActive == false && state.piPPending == false && state.nativeVideoOutput == "gpu-next"
+                    && state.piPActive == false && state.piPPending == false
+                    && state.nativeVideoOutput == before.nativeVideoOutput
+                    && state.nativeVideoOutput == self.expectedInlineOutput(state)
                     && state.automaticPiPRequests == before.automaticPiPRequests
                     && state.systemPiPStartCount == before.systemPiPStartCount
             }
@@ -149,7 +167,10 @@ final class AIDramaUITests: XCTestCase {
                 guard let state = self.playerState() else { return false }
                 return state.sceneActive == true && state.controllerIdentity == original.controllerIdentity
                     && state.playerCreations == original.playerCreations && state.manuallyPaused == paused
+                    && state.ownedPlayers == 1 && state.nativeVideoOutput == before.nativeVideoOutput
                     && state.piPActive == false && state.piPPending == false
+                    && state.systemPiPStartCount == before.systemPiPStartCount
+                    && state.systemPiPStopCount == before.systemPiPStopCount
                     && (paused || state.currentTime > before.currentTime + 0.25)
             }
             if paused { try assertPausedTimeStable(duration: 1) }
@@ -936,10 +957,25 @@ final class AIDramaUITests: XCTestCase {
         }
     }
 
+    private func expectedInlineOutput(_ state: PlayerState) -> String {
+        state.piPSupported == true ? "libmpv" : "gpu-next"
+    }
+
+    private func waitForInlineRenderer() throws {
+        try waitFor("The foreground renderer is ready for the device's PiP capability", timeout: 15) {
+            guard let state = self.playerState() else { return false }
+            return state.nativeVideoOutput == self.expectedInlineOutput(state)
+                && (state.piPSupported != true || state.piPPrepared == true)
+                && state.playing == true && !state.manuallyPaused
+                && state.piPActive == false && state.piPPending == false
+        }
+    }
+
     private func assertShortPlaybackSurvivesArmedPiP(id: String) throws {
         // Exercise the production PiP command handler while merely armed, including
         // when AVKit cannot create a controller on this simulator. Preparing PiP
-        // must preserve both user intent and foreground GPU output.
+        // must preserve user intent and the device's continuous inline output.
+        try waitForInlineRenderer()
         let injection = app.buttons["aidrama.debug.inlinePiPPause"]
         try waitFor("The inline PiP pause diagnostic is unobscured") { injection.isHittable }
         let injectionsBefore = try requirePlayerState().inlinePiPCommands ?? 0
@@ -953,14 +989,16 @@ final class AIDramaUITests: XCTestCase {
         try waitFor("The short keeps playing beyond the first second without play/pause taps", timeout: 13) {
             guard let state = self.playerState() else { return false }
             if state.selectedEpisodeID != id || state.manuallyPaused || state.ownedPlayers != 1
-                || state.nativeVideoOutput != "gpu-next" || state.piPActive != false || state.piPPending != false {
+                || state.nativeVideoOutput != self.expectedInlineOutput(state)
+                || state.controllerIdentity != before.controllerIdentity || state.playerCreations != before.playerCreations
+                || state.piPActive != false || state.piPPending != false {
                 unexpectedPauseOrSelection = true
                 return true
             }
             return Date() >= deadline && state.playing == true && state.currentTime > before.currentTime + 4.5
         }
         XCTAssertFalse(unexpectedPauseOrSelection,
-                       "Inline PiP preparation changed pause intent, decoder ownership or foreground GPU output")
+                       "Inline PiP preparation changed pause intent, decoder ownership or the expected foreground output")
         XCTAssertEqual(try requirePlayerState().controllerIdentity, before.controllerIdentity,
                        "Preparing an inline PiP source retains the visible decoder")
         attachShortPlaybackSample(try requirePlayerState(), phase: "end")

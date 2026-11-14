@@ -13,18 +13,21 @@ struct NativePiPPolicyTests {
 
     static func main() {
         verifyReadiness()
+        verifyAutomaticPlaybackTransition()
+        verifyAutomaticTransitionGrace()
+        verifyInlineOutputSize()
         verifyPausedManualEntry()
         verifyBackgroundOwnership()
-        require(NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
+        require(NativePiPPolicy.canAwaitAutomaticStart(preference: true, supported: true, playing: true,
             decoderReady: true, sourceAttached: true, attempted: false),
-            "Home transition may acquire the first PiP frame when speculative snapshot priming was unavailable")
-        require(!NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
+            "Home transition may wait for AVKit while the decoded source is eligible")
+        require(!NativePiPPolicy.canAwaitAutomaticStart(preference: true, supported: true, playing: true,
             decoderReady: true, sourceAttached: true, attempted: true),
-            "a failed automatic request cannot restart endlessly from its cleanup callback")
-        require(!NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: false,
+            "an expired automatic transition cannot repeatedly defer background pause")
+        require(!NativePiPPolicy.canAwaitAutomaticStart(preference: true, supported: true, playing: false,
             decoderReady: true, sourceAttached: true, attempted: false),
             "Home transition respects a paused video")
-        require(!NativePiPPolicy.canAttemptAutomaticStart(preference: false, supported: true, playing: true,
+        require(!NativePiPPolicy.canAwaitAutomaticStart(preference: false, supported: true, playing: true,
             decoderReady: true, sourceAttached: true, attempted: false),
             "disabled automatic PiP remains disabled even with a ready decoder")
         verifyRetryRecovery()
@@ -40,13 +43,13 @@ struct NativePiPPolicyTests {
 
     private static func verifyBackgroundOwnership() {
         func mayStart(_ session: NativePiPBackgroundSession) -> Bool {
-            NativePiPPolicy.canAttemptAutomaticStart(preference: true, supported: true, playing: true,
+            NativePiPPolicy.canAwaitAutomaticStart(preference: true, supported: true, playing: true,
                 decoderReady: true, sourceAttached: true, attempted: session.attempted)
         }
 
         var session = NativePiPBackgroundSession()
         session.enteredBackground(ownedPictureInPicture: false)
-        require(mayStart(session), "the first Home visit can request automatic PiP")
+        require(mayStart(session), "the first Home visit can wait for automatic PiP")
         session.requestedStart()
         session.enteredBackground(ownedPictureInPicture: false)
         require(!mayStart(session), "cleanup after a failed or closed automatic window cannot reopen PiP in background")
@@ -87,7 +90,7 @@ struct NativePiPPolicyTests {
         retry.completeAttempt(frameReady: true, now: 0)
         require(retry.frameReady, "the paused snapshot completes normal bootstrap readiness without resuming playback")
         require(!NativePiPPolicy.automaticAllowed(preference: true, eligible: true, playing: false,
-            frameReady: retry.frameReady, outputPrimed: true, sourceAttached: true),
+            frameReady: retry.frameReady, outputPrimed: true, sourceAttached: true, outputVisible: true),
             "manual readiness never enables automatic PiP for a paused movie")
     }
 
@@ -120,21 +123,102 @@ struct NativePiPPolicyTests {
         // Exercise every combination so that a missing single gate cannot allow
         // auto entry, including a prepared controller with no enqueued frame.
         var enabledCombinations = 0
-        for bits in 0..<64 {
+        for bits in 0..<128 {
             let enabled = NativePiPPolicy.automaticAllowed(
                 preference: bits & 1 != 0, eligible: bits & 2 != 0,
                 playing: bits & 4 != 0, frameReady: bits & 8 != 0,
-                outputPrimed: bits & 16 != 0, sourceAttached: bits & 32 != 0)
-            guard enabled == (bits == 63) else {
+                outputPrimed: bits & 16 != 0, sourceAttached: bits & 32 != 0,
+                outputVisible: bits & 64 != 0)
+            guard enabled == (bits == 127) else {
                 fatalError("FAIL: readiness combination \(bits) bypassed a gate")
             }
             if enabled { enabledCombinations += 1 }
         }
-        require(enabledCombinations == 1, "all six actual-readiness gates are required across 64 combinations")
+        require(enabledCombinations == 1, "all seven actual-readiness gates are required across 128 combinations")
         require(!NativePiPPolicy.automaticAllowed(preference: true, eligible: true, playing: false,
-            frameReady: true, outputPrimed: true, sourceAttached: true), "buffering or paused playback disarms automatic entry")
+            frameReady: true, outputPrimed: true, sourceAttached: true, outputVisible: true), "missing playback intent disarms automatic entry")
         require(!NativePiPPolicy.automaticAllowed(preference: true, eligible: true, playing: true,
-            frameReady: true, outputPrimed: true, sourceAttached: false), "detaching the real source view disarms automatic entry")
+            frameReady: true, outputPrimed: true, sourceAttached: false, outputVisible: true), "detaching the real source view disarms automatic entry")
+        require(!NativePiPPolicy.automaticAllowed(preference: true, eligible: true, playing: true,
+            frameReady: true, outputPrimed: true, sourceAttached: true, outputVisible: false), "a sample layer hidden behind the app cannot claim automatic inline readiness")
+    }
+
+    private static func verifyAutomaticPlaybackTransition() {
+        var playing = true, transitionIntent = false, userPaused = false, decoderReady = true
+        func eligible() -> Bool {
+            NativePiPPolicy.automaticAllowed(preference: true, eligible: true,
+                playing: NativePiPPolicy.automaticPlayback(playing: playing, transitionIntent: transitionIntent,
+                    userPaused: userPaused, decoderReady: decoderReady),
+                frameReady: true, outputPrimed: true, sourceAttached: true, outputVisible: true)
+        }
+        require(eligible(), "ordinary decoded playback can arm automatic PiP before Home")
+        transitionIntent = true
+        require(eligible(), "becoming inactive preserves captured playback intent")
+        playing = false
+        require(eligible(), "transient decoder buffering during the Home transition does not revoke automatic PiP")
+        userPaused = true
+        require(!eligible(), "an explicit user pause overrides captured Home playback intent")
+        userPaused = false; decoderReady = false
+        require(!eligible(), "EOF or an unavailable decoder overrides captured Home playback intent")
+        decoderReady = true; transitionIntent = false
+        require(!eligible(), "returning to foreground clears stale transition intent while playback is stopped")
+        playing = true
+        require(eligible(), "resumed playback can arm a later Home transition")
+    }
+
+    private static func verifyInlineOutputSize() {
+        let fullHD = CGSize(width: 1920, height: 1080)
+        require(NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: CGSize(width: 960, height: 540), displayScale: 2) == fullHD,
+                "inline software output preserves 1080p instead of the old 640-pixel PiP cap")
+        let landscape = NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: CGSize(width: 926, height: 428), displayScale: 3)
+        require(landscape == CGSize(width: 2336, height: 1080),
+                "a wide viewport retains the movie's full 1080p height plus room for side bars")
+        let fittedLandscapeHeight = min(landscape.height, landscape.width * 1080 / 1920)
+        require(fittedLandscapeHeight == 1080,
+                "fitting a 16:9 movie inside the wide canvas does not silently reduce its decoded resolution")
+        let portrait = NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: CGSize(width: 390, height: 844), displayScale: 3)
+        require(portrait == CGSize(width: 1168, height: 2532),
+                "a portrait canvas uses the aligned physical viewport instead of reducing the movie for its black bars")
+        let lowResolution = NativePiPPolicy.inlineOutputSize(source: CGSize(width: 640, height: 360), viewport: CGSize(width: 844, height: 390), displayScale: 3)
+        require(lowResolution == CGSize(width: 776, height: 360),
+                "a low-resolution movie preserves its 360p height without inflating to Retina resolution")
+        require(min(lowResolution.height, lowResolution.width * 360 / 640) == 360,
+                "extra canvas width contains side bars rather than upscaling a low-resolution movie")
+        require(NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: CGSize(width: 400, height: 300), displayScale: 1) == CGSize(width: 400, height: 300),
+                "output respects a one-times display scale when the source is larger")
+        require(NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: .zero, displayScale: 3) == fullHD,
+                "missing viewport dimensions safely fall back to source dimensions")
+        require(NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: CGSize(width: CGFloat.infinity, height: 390), displayScale: 3) == fullHD,
+                "non-finite viewport dimensions cannot create an invalid software buffer")
+        require(NativePiPPolicy.inlineOutputSize(source: fullHD, viewport: CGSize(width: 844, height: 390), displayScale: .nan) == fullHD,
+                "a non-finite display scale safely falls back to source dimensions")
+        require(NativePiPPolicy.inlineOutputSize(source: CGSize(width: 641, height: 361), viewport: .zero, displayScale: 2) == CGSize(width: 640, height: 360),
+                "fallback dimensions are rounded down to multiples of four")
+        require(NativePiPPolicy.inlineOutputSize(source: CGSize(width: CGFloat.nan, height: 1080), viewport: CGSize(width: 844, height: 390), displayScale: 3) == CGSize(width: 4, height: 4),
+                "invalid source dimensions return the minimum safe buffer size")
+        require(NativePiPPolicy.inlineOutputSize(source: CGSize(width: 2, height: 2), viewport: CGSize(width: 1, height: 1), displayScale: 1) == CGSize(width: 4, height: 4),
+                "sub-four-pixel dimensions retain the minimum aligned buffer size")
+    }
+
+    private static func verifyAutomaticTransitionGrace() {
+        for bits in 0..<8 {
+            let shouldPause = NativePiPPolicy.shouldPauseAfterAutomaticTransition(
+                isBackground: bits & 1 != 0, active: bits & 2 != 0, pending: bits & 4 != 0)
+            require(shouldPause == (bits == 1),
+                    "automatic grace expiry respects foreground and PiP ownership: \(bits)")
+        }
+        var isBackground = true, active = false, pending = true
+        require(!NativePiPPolicy.shouldPauseAfterAutomaticTransition(isBackground: isBackground, active: active, pending: pending),
+                "a late willStart callback protects playback while AVKit is opening PiP")
+        pending = false; active = true
+        require(!NativePiPPolicy.shouldPauseAfterAutomaticTransition(isBackground: isBackground, active: active, pending: pending),
+                "didStart transfers protection from pending to active without pausing the movie")
+        active = false
+        require(NativePiPPolicy.shouldPauseAfterAutomaticTransition(isBackground: isBackground, active: active, pending: pending),
+                "closing PiP in background allows normal background pause without reopening a window")
+        isBackground = false
+        require(!NativePiPPolicy.shouldPauseAfterAutomaticTransition(isBackground: isBackground, active: active, pending: pending),
+                "a delayed grace task cannot pause playback after the user returns to the app")
     }
 
     private static func verifyRetryRecovery() {

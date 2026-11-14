@@ -3,7 +3,8 @@ import Foundation
 /// State gates shared by the native bridge and controller. These describe app
 /// readiness; only AVKit can report whether a system PiP window starts.
 enum NativePiPPolicy {
-    static func canAttemptAutomaticStart(preference: Bool, supported: Bool, playing: Bool,
+    /// Allow one bounded wait for AVKit per Home visit; this does not request PiP.
+    static func canAwaitAutomaticStart(preference: Bool, supported: Bool, playing: Bool,
                                          decoderReady: Bool, sourceAttached: Bool, attempted: Bool) -> Bool {
         preference && supported && playing && decoderReady && sourceAttached && !attempted
     }
@@ -22,9 +23,42 @@ enum NativePiPPolicy {
         !stopped && sourceMatchesController
     }
 
+    /// Preserve playback intent while the decoder changes output for Home.
+    /// Buffering is not a user pause, but EOF and explicit pause still disarm PiP.
+    static func automaticPlayback(playing: Bool, transitionIntent: Bool,
+                                  userPaused: Bool, decoderReady: Bool) -> Bool {
+        decoderReady && !userPaused && (playing || transitionIntent)
+    }
+
     static func automaticAllowed(preference: Bool, eligible: Bool, playing: Bool,
-                                 frameReady: Bool, outputPrimed: Bool, sourceAttached: Bool) -> Bool {
-        preference && eligible && playing && frameReady && outputPrimed && sourceAttached
+                                 frameReady: Bool, outputPrimed: Bool, sourceAttached: Bool,
+                                 outputVisible: Bool) -> Bool {
+        preference && eligible && playing && frameReady && outputPrimed && sourceAttached && outputVisible
+    }
+
+    /// After AVKit's automatic-entry grace period, pause only if the app still
+    /// owns background playback without an active or opening PiP window.
+    static func shouldPauseAfterAutomaticTransition(isBackground: Bool, active: Bool, pending: Bool) -> Bool {
+        isBackground && !active && !pending
+    }
+
+    /// Render into the visible viewport's aspect ratio so mpv can apply fit or
+    /// panscan itself. Preserve the fitted video's resolution: the canvas may
+    /// need extra space for black bars beyond the source's longest edge.
+    /// Keep software-buffer dimensions aligned to four pixels.
+    static func inlineOutputSize(source: CGSize, viewport: CGSize, displayScale: CGFloat) -> CGSize {
+        func valid(_ size: CGSize) -> Bool {
+            size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+        }
+        func aligned(_ size: CGSize) -> CGSize {
+            CGSize(width: max(4, floor(size.width / 4) * 4),
+                   height: max(4, floor(size.height / 4) * 4))
+        }
+        guard valid(source) else { return CGSize(width: 4, height: 4) }
+        guard valid(viewport), displayScale.isFinite, displayScale > 0 else { return aligned(source) }
+        let fittedSourceScale = max(source.width / viewport.width, source.height / viewport.height)
+        let scale = min(max(1, displayScale), fittedSourceScale)
+        return aligned(CGSize(width: viewport.width * scale, height: viewport.height * scale))
     }
 
     static func shouldStopOnForeground(returnedFromBackground: Bool, transitioningOrActive: Bool) -> Bool {

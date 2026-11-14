@@ -3,7 +3,7 @@ import CoreVideo
 import Libmpv
 
 /// PiP needs sample buffers; a CAMetalLayer cannot be used as its content source.
-/// The same mpv decoder/audio session renders small CPU frames only while PiP is in use.
+/// The same mpv decoder/audio session supplies the visible inline source for automatic PiP.
 /// Render API calls run on their own queue, without locks/waits on the client API thread.
 final class MPVSoftwareVideoOutput {
     private let queue = DispatchQueue(label: "AnPinime.PiP.frames", qos: .userInitiated)
@@ -11,14 +11,15 @@ final class MPVSoftwareVideoOutput {
     private var timer: DispatchSourceTimer?
     private let deliveryGate = NativePiPFrameGate()
     private var dimensions: (Int32, Int32) = (640, 360)
+    private var pool: CVPixelBufferPool?
     var frame: ((CVPixelBuffer) -> Void)?
 
     func prepare(handle: OpaquePointer, size: CGSize, completion: @escaping (Bool) -> Void) {
-        let factor = min(1, 640 / max(1, max(size.width, size.height)))
-        let width = Int32(max(4, Int(size.width * factor) / 4 * 4))
-        let height = Int32(max(4, Int(size.height * factor) / 4 * 4))
         queue.async { [self] in
-            dimensions = (width, height)
+            guard configurePool(size: size) else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
             let api = strdup("sw")!
             defer { free(api) }
             var parameters = [mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(api)),
@@ -28,11 +29,35 @@ final class MPVSoftwareVideoOutput {
         }
     }
 
+    func resize(to size: CGSize) {
+        queue.async { [self] in _ = configurePool(size: size) }
+    }
+
+    /// Keep the previous working pool on resize/allocation failure.
+    private func configurePool(size: CGSize) -> Bool {
+        let width = Int32(max(4, Int(size.width) / 4 * 4))
+        let height = Int32(max(4, Int(size.height) / 4 * 4))
+        guard dimensions.0 != width || dimensions.1 != height || pool == nil else { return true }
+        var candidate: CVPixelBufferPool?
+        let attributes: [CFString: Any] = [kCVPixelBufferWidthKey: Int(width), kCVPixelBufferHeightKey: Int(height),
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey: [:], kCVPixelBufferBytesPerRowAlignmentKey: 64]
+        guard CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &candidate) == kCVReturnSuccess,
+              let candidate else { return false }
+        // Creating a pool alone allocates no image memory. Prove that its first
+        // frame can be allocated before replacing the visible video output.
+        var firstBuffer: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, candidate, &firstBuffer) == kCVReturnSuccess else { return false }
+        dimensions = (width, height)
+        pool = candidate
+        return true
+    }
+
     func start() {
         queue.async { [self] in
             guard context != nil, timer == nil else { return }
             let clock = DispatchSource.makeTimerSource(queue: queue)
-            clock.schedule(deadline: .now(), repeating: 1.0 / 30.0, leeway: .milliseconds(3))
+            clock.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(3))
             clock.setEventHandler { [weak self] in self?.render() }
             timer = clock; clock.resume()
         }
@@ -44,9 +69,10 @@ final class MPVSoftwareVideoOutput {
         defer { if !delivered { deliveryGate.release() } }
         guard let context, mpv_render_context_update(context) & 1 != 0 else { return }
         var pixelBuffer: CVPixelBuffer?
-        let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:], kCVPixelBufferBytesPerRowAlignmentKey: 64] as CFDictionary
-        guard CVPixelBufferCreate(kCFAllocatorDefault, Int(dimensions.0), Int(dimensions.1), kCVPixelFormatType_32BGRA,
-                                  attributes, &pixelBuffer) == kCVReturnSuccess, let pixelBuffer else { return }
+        guard let pool else { return }
+        let limits = [kCVPixelBufferPoolAllocationThresholdKey: 4] as CFDictionary
+        guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, limits,
+            &pixelBuffer) == kCVReturnSuccess, let pixelBuffer else { return }
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         guard let pixels = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
@@ -89,6 +115,7 @@ final class MPVSoftwareVideoOutput {
         queue.async { [self] in
             timer?.cancel(); timer = nil
             if let context { mpv_render_context_free(context) }; context = nil
+            pool = nil
             DispatchQueue.main.async { completion() }
         }
     }
@@ -112,6 +139,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private var stopping = false
     private var stopped = false
     private var restoreAfterStop = false
+    private var firstFrameTimeout: Task<Void, Never>?
     private var startTimeout: Task<Void, Never>?
     private var stopTimeout: Task<Void, Never>?
     private var cleanupComplete = false
@@ -120,6 +148,9 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private var retainedUntilStopped: MPVPictureInPicture?
     private var outputReady = false
     private var outputActivated = false
+    private var liveFrameReady = false
+    private var firstLiveFrameDisplayed = false
+    private var decodedSize = CGSize.zero
     private var wantsOutput = false
     private var outputPreparationFailed = false
     private var preparing = false
@@ -129,6 +160,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     var onSystemStart: (() -> Void)?
     var onRestoreRequested: (() -> Void)?
     var onEvent: ((String) -> Void)?
+    var usesInlineOutput: Bool { outputActivated }
     var possible: Bool { controller?.isPictureInPicturePossible == true }
     var transitioningOrActive: Bool { starting || stopping || controller?.isPictureInPictureActive == true }
     var hasDecodedFrame: Bool { bootstrapFrame != nil || frameReady }
@@ -166,9 +198,8 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         output.frame = { [weak self] pixelBuffer in self?.enqueue(pixelBuffer) }
     }
 
-    /// The reference bridge keeps a transparent window underlay separate from
-    /// the visible renderer, then updates it to the player's source rect. Use
-    /// this player's window, never an unrelated scene's first/key window.
+    /// Automatic PiP uses the actual visible inline layer, in this player's
+    /// scene. Never advertise a window underlay/snapshot as an inline video.
     func updateSourceGeometry() {
         guard !stopped, !transitioningOrActive, !wantsStart, !playback.pictureInPicturePending,
               let sourceView, let window = sourceView.window else { return }
@@ -177,8 +208,6 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
               rect.width.isFinite, rect.height.isFinite, rect.width > 1, rect.height > 1 else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if outputActivated {
-            // AVKit's automatic inline transition needs a visible sample source.
-            // A layer behind the opaque app window only worked for manual PiP.
             if displayHost.superview !== sourceView { sourceView.addSubview(displayHost) }
             displayHost.frame = sourceView.bounds
         } else {
@@ -187,10 +216,33 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         }
         layer.frame = displayHost.bounds
         CATransaction.commit()
+        if outputActivated { output.resize(to: inlineOutputSize) }
+    }
+
+    private var inlineOutputSize: CGSize {
+        NativePiPPolicy.inlineOutputSize(source: decodedSize,
+            viewport: sourceView?.bounds.size ?? decodedSize,
+            displayScale: sourceView?.window?.screen.nativeScale ?? 1)
+    }
+
+    private var visibleInlineSource: Bool {
+        guard outputActivated, liveFrameReady, let sourceView,
+              displayHost.superview === sourceView, !displayHost.isHidden else { return false }
+        var ancestor: UIView? = displayHost
+        while let view = ancestor {
+            guard !view.isHidden, view.alpha > 0.01 else { return false }
+            ancestor = view.superview
+        }
+        return displayHasImage
+    }
+
+    private var displayHasImage: Bool {
+        if #available(iOS 17.4, *) { return layer.isReadyForDisplay }
+        return layer.status == .rendering
     }
 
     /// Arm AVKit while the app is still foreground, using a real decoded frame.
-    /// GPU playback continues normally until background/explicit PiP requests CPU output.
+    /// Automatic playback also activates continuous inline output while foreground.
     func arm(snapshot: CVPixelBuffer?, automatic: Bool) {
         guard !stopped, !stopping else { return }
         updateSourceGeometry()
@@ -223,6 +275,14 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     }
 
     private func updateAutomaticEligibility() {
+        // enqueue() is not evidence that CoreMedia accepted/displayed an image.
+        // Keep the recovery watchdog until display readiness is observed; AVKit
+        // may reparent the source meanwhile, so do not require inline ancestry here.
+        if outputActivated, liveFrameReady, !firstLiveFrameDisplayed, layer.status != .failed, displayHasImage {
+            firstLiveFrameDisplayed = true
+            firstFrameTimeout?.cancel(); firstFrameTimeout = nil
+            command("pipFrameVisible", 1)
+        }
         let enabled = meetsAutomaticRequirements
         if enabled, controller?.canStartPictureInPictureAutomaticallyFromInline != true { prepareAudioSession() }
         controller?.canStartPictureInPictureAutomaticallyFromInline = enabled
@@ -239,22 +299,24 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private var meetsAutomaticRequirements: Bool {
         NativePiPPolicy.automaticAllowed(
             preference: wantsAutomatic, eligible: controller != nil && !stopping && !stopped,
-            playing: playback.playing && !playback.userPaused, frameReady: frameReady && layer.status != .failed,
-            outputPrimed: outputReady, sourceAttached: sourceAttached)
+            playing: wantsAutomatic && !playback.userPaused, frameReady: frameReady && layer.status != .failed,
+            outputPrimed: outputReady, sourceAttached: sourceAttached, outputVisible: visibleInlineSource)
     }
 
-    /// Allocate the CPU rendering backend before Home, while leaving the active
-    /// Metal VO, audio and pause intent untouched. Creating a render context does
-    /// not select libmpv's VO; that switch belongs to the actual PiP transition.
+    /// Allocate before changing the visible output. Automatic playback activates
+    /// this source inline; manual-only playback activates it on the PiP gesture.
     func primeOutput(handle: OpaquePointer, size: CGSize) {
         guard !stopped, !stopping else { return }
+        decodedSize = size
+        if outputActivated { output.resize(to: inlineOutputSize) }
         if !preparing, !outputReady, !outputPreparationFailed {
             preparing = true
-            output.prepare(handle: handle, size: size) { [weak self] success in
+            output.prepare(handle: handle, size: inlineOutputSize) { [weak self] success in
                 guard let self, !self.stopped, !self.stopping else { return }
                 self.preparing = false
                 guard success else {
                     self.outputPreparationFailed = true
+                    self.onEvent?("outputUnavailable")
                     if self.wantsOutput { self.fail("Thiết bị chưa khởi tạo được hình ảnh cho PiP.") }
                     return
                 }
@@ -278,8 +340,8 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         if start { requestStart() }
     }
 
-    /// Produce actual sample buffers while the scene is still foreground-inactive.
-    /// This arms AVKit automatic entry; it does not request a PiP window.
+    /// Run the visible sample source during normal foreground playback, before
+    /// any Home gesture. This does not request a PiP window or change pause intent.
     func primeAutomaticFrames(handle: OpaquePointer, size: CGSize) {
         guard !stopped, !stopping else { return }
         wantsOutput = true
@@ -296,10 +358,17 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
             displayHost.frame = sourceView.bounds
             layer.frame = displayHost.bounds
         }
+        displayHost.isHidden = true
         bootstrapFrame = nil
         command("pipOutput", 1)
         invalidatePlaybackState()
         output.start()
+        firstFrameTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self, !self.stopped, !self.stopping, !self.firstLiveFrameDisplayed else { return }
+            self.onEvent?("outputUnavailable")
+            self.fail("Chưa nhận được hình ảnh PiP. Đã khôi phục trình phát; bạn có thể thử nút PiP.")
+        }
         onEvent?("outputActivated")
     }
 
@@ -332,16 +401,23 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         var description: CMVideoFormatDescription?
         guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer,
                                                           formatDescriptionOut: &description) == noErr, let description else { return }
-        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 30),
+        var timing = CMSampleTimingInfo(duration: .invalid,
                                         presentationTimeStamp: timebase.map(CMTimebaseGetTime) ?? CMTime(seconds: playback.currentTime, preferredTimescale: 600), decodeTimeStamp: .invalid)
         var sample: CMSampleBuffer?
         guard CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer,
             formatDescription: description, sampleTiming: &timing, sampleBufferOut: &sample) == noErr, let sample else { return }
-        if !rendered, let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true), CFArrayGetCount(attachments) > 0 {
+        // mpv already paces these decoded frames. Do not schedule them again on
+        // the progress clock, especially the single frame from a paused seek.
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true), CFArrayGetCount(attachments) > 0 {
             let values = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
             CFDictionarySetValue(values, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(), Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
         }
         layer.enqueue(sample)
+        if rendered, !liveFrameReady {
+            liveFrameReady = true
+            displayHost.isHidden = false
+        }
+        updateAutomaticEligibility()
         if !frameReady {
             frameReady = true
             updateAutomaticEligibility()
@@ -395,6 +471,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
         // didStop. Keep its delegate and render context alive until that handshake.
         retainedUntilStopped = self
         startTimeout?.cancel(); startTimeout = nil
+        firstFrameTimeout?.cancel(); firstFrameTimeout = nil
         bootstrapFrame = nil
         possibility = nil
         controller?.canStartPictureInPictureAutomaticallyFromInline = false
@@ -560,6 +637,8 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     var readinessFacts: [String: Any] {
         ["frameReady": frameReady, "outputPrimed": outputReady,
          "outputActivated": outputActivated, "sourceAttached": sourceAttached,
+         "visibleInlineSource": visibleInlineSource, "liveFrameReady": liveFrameReady,
+         "firstLiveFrameDisplayed": firstLiveFrameDisplayed,
          "sourceWindow": sourceView?.window != nil,
          "layerAttachedToHost": layer.superlayer === displayHost.layer,
          "hostWindow": displayHost.window != nil,

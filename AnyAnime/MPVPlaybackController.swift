@@ -21,8 +21,9 @@ final class MPVPlaybackController: UIViewController {
     private var initialViewport: CGSize?
     var onViewportChange: ((CGSize) -> Void)?
     private var automaticPiPPrepared = false
-    private var automaticOutputPrimed = false
     private var automaticPlaybackIntent = false
+    private var automaticInlineUnavailable = false
+    private var automaticBackgroundGrace: Task<Void, Never>?
     private var backgroundPiPSession = NativePiPBackgroundSession()
     private var wasInBackground = false
     private var manuallyRequestedPiP = false
@@ -174,6 +175,7 @@ final class MPVPlaybackController: UIViewController {
     }
 
     func shutdown() {
+        automaticBackgroundGrace?.cancel(); automaticBackgroundGrace = nil
         resizeTask?.cancel(); resizeTask = nil
         timer?.invalidate(); timer = nil
         NotificationCenter.default.removeObserver(self)
@@ -205,7 +207,7 @@ final class MPVPlaybackController: UIViewController {
     }
 
     private var automaticPiPEnabled: Bool {
-        !preloading && (UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true)
+        !preloading && !automaticInlineUnavailable && (UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true)
     }
 
     private var playingForPiP: Bool {
@@ -217,9 +219,19 @@ final class MPVPlaybackController: UIViewController {
         loaded && !preloading && handle != nil && string("idle-active") != "yes" && decodedVideoSize != nil
     }
 
+    private var automaticPlaybackEligible: Bool {
+        NativePiPPolicy.automaticPlayback(playing: playingForPiP,
+            transitionIntent: automaticPlaybackIntent, userPaused: userPaused,
+            decoderReady: decoderReadyForPiP)
+    }
+
     private func updateAutomaticPiPReadiness() {
+        // Capture real playback before the foreground output switch; transient
+        // cache pauses do not erase that intent. Explicit pause/EOF still do.
+        if !automaticPiPEnabled || !decoderReadyForPiP || userPaused { automaticPlaybackIntent = false }
+        else if playingForPiP { automaticPlaybackIntent = true }
         let previouslyPrepared = automaticPiPPrepared
-        let eligible = automaticPiPEnabled && playingForPiP && viewIfLoaded?.window != nil
+        let eligible = automaticPiPEnabled && automaticPlaybackEligible && viewIfLoaded?.window != nil
         pictureInPicture?.setAutomatic(eligible)
         automaticPiPPrepared = pictureInPicture?.automaticReady == true
         if previouslyPrepared != automaticPiPPrepared { tracePiP("readinessChanged") }
@@ -228,21 +240,20 @@ final class MPVPlaybackController: UIViewController {
     @objc private func prepareForBackground() { prepareAutomaticPictureInPicture() }
 
     /// Inactive also means Control Center, an incoming call, or a sheet transition.
-    /// Supply real frames before iOS evaluates automatic PiP. A snapshot-only
-    /// source may still have no accepted sample at this point. No window is
-    /// requested until AVKit starts automatically or didEnterBackground fires.
+    /// The visible sample source is already running before this notification.
+    /// Preserve play intent across temporary decoder buffering during Home;
+    /// do not open a window just because Control Center made the app inactive.
     func prepareAutomaticPictureInPicture() {
         let automatic = automaticPiPEnabled
         // A preference change can arrive between the last poll and resign-active.
         // Update AVKit before it evaluates its automatic inline transition.
         updateAutomaticPiPReadiness()
-        guard automatic, playback.pictureInPictureSupported, playingForPiP,
+        guard automatic, playback.pictureInPictureSupported, automaticPlaybackEligible,
               viewIfLoaded?.window != nil,
               !playback.pictureInPicturePending, !playback.pictureInPictureActive else { return }
         automaticPlaybackIntent = true
         armPictureInPicture()
         if let handle, let size = decodedVideoSize {
-            automaticOutputPrimed = true
             pictureInPicture?.primeAutomaticFrames(handle: handle, size: size)
         }
         updateAutomaticPiPReadiness()
@@ -254,7 +265,7 @@ final class MPVPlaybackController: UIViewController {
     private func armPictureInPicture() {
         guard loaded, !preloading, let handle, let videoSize = decodedVideoSize else { return }
         if let pictureInPicture {
-            pictureInPicture.arm(snapshot: nil, automatic: automaticPiPEnabled && playingForPiP)
+            pictureInPicture.arm(snapshot: nil, automatic: automaticPiPEnabled && automaticPlaybackEligible)
             pictureInPicture.primeOutput(handle: handle, size: videoSize)
             requestPiPSnapshot()
             updateAutomaticPiPReadiness()
@@ -269,6 +280,7 @@ final class MPVPlaybackController: UIViewController {
             guard let self, self.piPGeneration == generation else { return }
             if name == "pipOutput" {
                 self.set("hwdec", "videotoolbox-copy"); self.set("vo", "libmpv")
+            } else if name == "pipFrameVisible" {
                 self.surface.isHidden = true
             } else { self.playback.send(name, value) }
         }, restoreVideo: { [weak self] in
@@ -294,6 +306,14 @@ final class MPVPlaybackController: UIViewController {
                 }
                 return
             }
+            // A delayed AVKit start can arrive after the bounded background
+            // grace period paused inline playback. Resume only that app-owned
+            // pause, never an explicit pause made by the user.
+            if self.backgroundPaused && !self.userPaused {
+                self.set("pause", "no")
+                self.backgroundPaused = false
+            }
+            self.automaticBackgroundGrace?.cancel(); self.automaticBackgroundGrace = nil
             self.preparePictureInPicture(start: false)
         }
         pip.onRestoreRequested = { [weak self] in
@@ -308,6 +328,13 @@ final class MPVPlaybackController: UIViewController {
         pip.onEvent = { [weak self] event in
             guard let self, self.piPGeneration == generation else { return }
             self.tracePiP(event)
+            if event == "outputUnavailable" {
+                // Do not repeatedly interrupt a working GPU player if this
+                // device cannot sustain the inline sample output. Manual retry
+                // remains available and explicitly starts a new attempt.
+                self.automaticInlineUnavailable = true
+                self.automaticPlaybackIntent = false
+            }
             if event == "firstFrameReady" || event == "outputPrimed" { self.updateAutomaticPiPReadiness() }
             if event == "restoreRejected", UIApplication.shared.applicationState == .active {
                 // The callback was already resolved false (timeout/teardown).
@@ -327,9 +354,9 @@ final class MPVPlaybackController: UIViewController {
             self.recordAutomaticPiP(event)
             #endif
         }
-        pip.arm(snapshot: nil, automatic: automaticPiPEnabled && playingForPiP)
-        // Prime the renderer now rather than first allocating it after iOS has
-        // backgrounded the app. GPU playback remains the visible inline output.
+        pip.arm(snapshot: nil, automatic: automaticPiPEnabled && automaticPlaybackEligible)
+        // Allocate before Home. Foreground polling activates this same decoder's
+        // visible inline output whenever automatic PiP is enabled.
         pip.primeOutput(handle: handle, size: videoSize)
         requestPiPSnapshot()
     }
@@ -391,25 +418,37 @@ final class MPVPlaybackController: UIViewController {
         }
         updateAutomaticPiPReadiness()
         tracePiP("backgroundAfterReadiness")
-        if NativePiPPolicy.canAttemptAutomaticStart(preference: automatic,
-            supported: playback.pictureInPictureSupported, playing: playingForPiP || (automaticPlaybackIntent && !userPaused),
-            decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil,
-            attempted: backgroundPiPSession.attempted),
-            !playback.pictureInPictureActive, !playback.pictureInPicturePending {
-            // Manual startup can acquire its first CPU frame even if speculative
-            // snapshot priming failed. Use that same bounded path once on Home.
-            backgroundPiPSession.requestedStart()
-            #if DEBUG
-            automaticPiPRequests += 1
-            recordAutomaticPiP("automaticBackgroundRequest")
-            #endif
-            preparePictureInPicture(start: true)
-        }
         guard !playback.pictureInPictureActive, !playback.pictureInPicturePending else { return }
+        if NativePiPPolicy.canAwaitAutomaticStart(preference: automatic,
+            supported: playback.pictureInPictureSupported, playing: automaticPlaybackEligible,
+            decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil,
+            attempted: backgroundPiPSession.attempted) {
+            // AVKit owns automatic entry and the iOS automatic-PiP preference.
+            // Never call startPictureInPicture after suspension or on a generic
+            // resign-active event (Control Center/calls). Give its queued callback
+            // time to acquire playback before applying the background pause.
+            backgroundPiPSession.requestedStart()
+            automaticBackgroundGrace?.cancel()
+            let generation = piPGeneration
+            automaticBackgroundGrace = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, let self, self.piPGeneration == generation else { return }
+                self.automaticBackgroundGrace = nil
+                self.pauseIfBackgroundWithoutPiP()
+            }
+        } else { pauseIfBackgroundWithoutPiP() }
+    }
+
+    private func pauseIfBackgroundWithoutPiP() {
+        guard NativePiPPolicy.shouldPauseAfterAutomaticTransition(
+            isBackground: UIApplication.shared.applicationState == .background,
+            active: playback.pictureInPictureActive, pending: playback.pictureInPicturePending) else { return }
         backgroundPaused = !userPaused
         set("pause", "yes")
+        tracePiP("backgroundWithoutPiP")
     }
     @objc private func foreground() {
+        automaticBackgroundGrace?.cancel(); automaticBackgroundGrace = nil
         let returnedFromBackground = wasInBackground
         wasInBackground = false
         backgroundPiPSession.enteredForeground()
@@ -420,7 +459,7 @@ final class MPVPlaybackController: UIViewController {
             acknowledgePiPRestoreIfReady()
         } else if let pip = pictureInPicture,
            NativePiPPolicy.shouldStopOnForeground(returnedFromBackground: returnedFromBackground,
-                transitioningOrActive: automaticOutputPrimed || pip.transitioningOrActive || playback.pictureInPicturePending || playback.pictureInPictureActive) {
+                transitioningOrActive: pip.transitioningOrActive || playback.pictureInPicturePending || playback.pictureInPictureActive) {
             let generation = piPGeneration
             automaticPiPPrepared = false
             // Keep AVKit's layer and software renderer until its didStop callback;
@@ -429,7 +468,6 @@ final class MPVPlaybackController: UIViewController {
         } else { updateAutomaticPiPReadiness() }
         if backgroundPaused && !userPaused { set("pause", "no") }
         backgroundPaused = false
-        automaticOutputPrimed = false
         poll()
     }
 
@@ -525,6 +563,7 @@ final class MPVPlaybackController: UIViewController {
             guard playback.pictureInPictureSupported,
                   NativePiPPolicy.canBootstrapFrame(playing: playingForPiP, manualRequest: true,
                     decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil) else { return }
+            automaticInlineUnavailable = false
             manuallyRequestedPiP = true
             automaticPiPPrepared = false
             preparePictureInPicture()
@@ -593,7 +632,7 @@ final class MPVPlaybackController: UIViewController {
                 snapshotRequestedAt = nil
                 if event.pointee.error >= 0, let result = event.pointee.data?.assumingMemoryBound(to: mpv_event_command.self),
                    let buffer = decodedSnapshot(result.pointee.result) {
-                    pictureInPicture?.arm(snapshot: buffer, automatic: automaticPiPEnabled && playingForPiP)
+                    pictureInPicture?.arm(snapshot: buffer, automatic: automaticPiPEnabled && automaticPlaybackEligible)
                     #if DEBUG
                     recordAutomaticPiP("armedWithDecodedFrame")
                     #endif
@@ -630,10 +669,20 @@ final class MPVPlaybackController: UIViewController {
         if loaded, width > 0, height > 0, automaticPiPEnabled, playingForPiP,
            UIApplication.shared.applicationState == .active, viewIfLoaded?.window != nil,
            playback.pictureInPictureSupported {
-            armPictureInPicture()
-            // Keep eligibility ready before the lifecycle notification. The
-            // first Home gesture must not depend on observer ordering.
             updateAutomaticPiPReadiness()
+            armPictureInPicture()
+            // AVKit must see an actual playing inline sample layer BEFORE Home,
+            // not a hidden snapshot or a VO change started by willResignActive.
+            if let size = decodedVideoSize {
+                pictureInPicture?.primeAutomaticFrames(handle: context, size: size)
+            }
+            updateAutomaticPiPReadiness()
+        }
+        if !automaticPiPEnabled, let pip = pictureInPicture, pip.usesInlineOutput,
+           !pip.transitioningOrActive, !playback.pictureInPicturePending,
+           UIApplication.shared.applicationState == .active {
+            let generation = piPGeneration
+            pip.stop(restore: true) { [weak self] in self?.finishedPictureInPicture(generation: generation) }
         }
         updateAutomaticPiPReadiness()
         pictureInPicture?.invalidatePlaybackState()
@@ -675,7 +724,11 @@ final class MPVPlaybackController: UIViewController {
                 self.pictureInPicture = nil; self.pipSmokeStageAt = Date(); self.pipSmokeStage = 5
             }
         case 5 where Date().timeIntervalSince(pipSmokeStageAt) > 0.7:
-            guard playback.playing, number("video-params/w") > 0, string("vo") == "gpu-next" else { return }
+            let outputRestored = automaticPiPEnabled && playback.pictureInPictureSupported
+                ? pictureInPicture?.usesInlineOutput == true && (pictureInPicture?.frameCount ?? 0) > 0
+                : string("vo") == "gpu-next"
+            guard playback.playing, number("video-params/w") > 0, outputRestored,
+                  !playback.pictureInPictureActive, !playback.pictureInPicturePending else { return }
             playback.pipSmokeSeekPauseRestored = true; pipSmokeStage = 6
         default: break
         }
