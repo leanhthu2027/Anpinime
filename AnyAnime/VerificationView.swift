@@ -151,7 +151,8 @@ final class WebsiteSession: NSObject, ObservableObject, WKNavigationDelegate, WK
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.targetFrame?.isMainFrame == true else { decisionHandler(.allow); return }
         let host = navigationAction.request.url?.host?.lowercased() ?? ""
-        let allowed = host == targetURL?.host || AnimeSiteConfiguration.isAutomaticHost(host)
+        let miruroHosts: Set<String> = ["miruro.cx", "miruro.tv", "miruro.to", "anivault.tv"]
+        let allowed = host == targetURL?.host || AnimeSiteConfiguration.isAutomaticHost(host) || miruroHosts.contains(host)
         decisionHandler(allowed ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,

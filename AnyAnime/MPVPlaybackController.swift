@@ -287,7 +287,7 @@ final class MPVPlaybackController: UIViewController {
         snapshotRetry = NativePiPSnapshotRetry(); snapshotRequestedAt = nil
         playback.pictureInPictureError = nil
         let pip = MPVPictureInPicture(playback: playback, sourceView: view,
-            maximumOutputEdge: automaticInlineFailures > 0 ? 1280 : nil, command: { [weak self] name, value in
+            maximumOutputEdge: automaticInlineFailures > 0 ? 960 : 1280, command: { [weak self] name, value in
             guard let self, self.piPGeneration == generation else { return }
             if name == "pipOutput" {
                 self.set("hwdec", "videotoolbox-copy"); self.set("vo", "libmpv")

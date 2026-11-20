@@ -151,10 +151,21 @@ final class AetherSubtitleClient {
               let size = (try? localFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
               size <= Self.maximumBytes else { throw AetherSubtitleError.tooLarge }
         let original = try String(contentsOf: localFile, encoding: .utf8)
-        var lines = Self.normalizedLines(original)
-        let entries = Self.cues(original)
+        let isASS = localFile.pathExtension.lowercased() == "ass"
+            || (original.contains("[Events]") && original.contains("Dialogue:"))
+        let sourceText: String
+        let targetExt: String
+        if isASS, let converted = Self.assToWebVTT(original) {
+            sourceText = converted
+            targetExt = "vtt"
+        } else {
+            sourceText = original
+            targetExt = localFile.pathExtension
+        }
+        var lines = Self.normalizedLines(sourceText)
+        let entries = Self.cues(sourceText)
         guard !entries.isEmpty, entries.count <= 20000 else { throw AetherSubtitleError.invalidFormat }
-        let output = localFile.deletingPathExtension().appendingPathExtension("vi." + localFile.pathExtension)
+        let output = localFile.deletingPathExtension().appendingPathExtension("vi." + targetExt)
         if let attributes = try? FileManager.default.attributesOfItem(atPath: output.path),
            let date = attributes[.modificationDate] as? Date, Date().timeIntervalSince(date) < 86400 {
             progress(1); return output
@@ -264,6 +275,67 @@ final class AetherSubtitleClient {
     }
     private static func normalizedLines(_ text: String) -> [String] {
         text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").components(separatedBy: "\n")
+    }
+
+    /// Convert Aegisub ASS/SSA `[Events]` `Dialogue:` lines into clean WebVTT cues for translation.
+    static func assToWebVTT(_ text: String) -> String? {
+        let lines = normalizedLines(text)
+        var inEvents = false
+        var startIndex = 1
+        var endIndex = 2
+        var textIndex = 9
+        var vttLines = ["WEBVTT", ""]
+        var cueCount = 0
+
+        func formatASSTime(_ raw: String) -> String? {
+            let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = clean.split(separator: ":")
+            guard parts.count == 3 else { return nil }
+            let h = Int(parts[0]) ?? 0
+            let m = Int(parts[1]) ?? 0
+            let secParts = parts[2].split(separator: ".")
+            guard let s = Int(secParts[0]) else { return nil }
+            let csStr = secParts.count > 1 ? String(secParts[1].prefix(2)) : "00"
+            let cs = Int(csStr.padding(toLength: 2, withPad: "0", startingAt: 0)) ?? 0
+            return String(format: "%02d:%02d:%02d.%03d", h, m, s, cs * 10)
+        }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                inEvents = trimmed.lowercased() == "[events]"
+                continue
+            }
+            guard inEvents else { continue }
+            if trimmed.lowercased().hasPrefix("format:") {
+                let cols = trimmed.dropFirst(7).split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                if let s = cols.firstIndex(of: "start") { startIndex = s }
+                if let e = cols.firstIndex(of: "end") { endIndex = e }
+                if let t = cols.firstIndex(of: "text") { textIndex = t }
+                continue
+            }
+            guard trimmed.lowercased().hasPrefix("dialogue:") else { continue }
+            let payload = String(trimmed.dropFirst(9)).trimmingCharacters(in: .whitespaces)
+            let fields = payload.split(separator: ",", maxSplits: textIndex, omittingEmptySubsequences: false)
+            guard fields.count > textIndex,
+                  let start = formatASSTime(String(fields[startIndex])),
+                  let end = formatASSTime(String(fields[endIndex])) else { continue }
+            let rawText = String(fields[textIndex])
+            // Skip ASS vector drawings (`\p1`..`\p9`)
+            if rawText.range(of: #"\\p[1-9]"#, options: .regularExpression) != nil { continue }
+            let cleaned = rawText
+                .replacingOccurrences(of: #"\{[^}]*\}"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: "\\N", with: "\n")
+                .replacingOccurrences(of: "\\n", with: "\n")
+                .replacingOccurrences(of: "\\h", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { continue }
+            cueCount += 1
+            vttLines.append("\(start) --> \(end)")
+            vttLines.append(cleaned)
+            vttLines.append("")
+        }
+        return cueCount > 0 ? vttLines.joined(separator: "\n") : nil
     }
     static func cues(_ text: String) -> [Cue] {
         let lines = normalizedLines(text)

@@ -55,6 +55,7 @@ struct NativeStream {
     let url: URL
     let headers: [String: String]
     let captions: [RemoteCaption]
+    var label: String = ""
 }
 
 struct ResolvedPlayback {
@@ -64,6 +65,7 @@ struct ResolvedPlayback {
     let isWeb: Bool
     var nativeFallbacks: [NativeStream] = []
     var captions: [RemoteCaption] = []
+    var label: String = ""
 }
 
 struct PlaybackChoice: Identifiable, Hashable {

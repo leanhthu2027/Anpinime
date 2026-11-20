@@ -317,7 +317,7 @@ struct PlayerView: View {
                             else { controlButton("forward.end.fill", "Tập tiếp") { select(next) } }
                         }
                         Spacer(minLength: 0)
-                        if current.source.isMovie {
+                        if current.source.isMovie || current.source == .miruro {
                             Button { openPanel("subtitles") } label: { MorphIcon(name: "captions").frame(width: 23, height: 23).frame(width: 44, height: 44) }
                                 .accessibilityLabel("Phụ đề và caption")
                             Button { openPanel("quality") } label: { MorphIcon(name: "quality").frame(width: 23, height: 23).frame(width: 44, height: 44) }

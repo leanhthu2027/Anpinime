@@ -79,9 +79,14 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     private var mediaTracksLoaded = false
     private var filmRelay: FilmMediaRelay?
     private var trackTask: Task<Void, Never>?
-    private var miruroStreams: [NativeStream] = []
+    private var miruroAllStreams: [NativeStream] = []
+    private var miruroStreamIndex = 0
     private var miruroCaptions: [AetherSubtitle] = []
+    private var miruroLocalCaptions: [String: URL] = [:]
+    private var miruroSelectedCaption: AetherSubtitle?
+    private var miruroSelectedFile: URL?
     private var miruroCaptionTask: Task<Void, Never>?
+    private var miruroRelayTask: Task<Void, Never>?
     private var miruroResumePosition = 0.0
     private let captionClient = AetherSubtitleClient()
 
@@ -117,6 +122,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         playback.command = { [weak self] name, value in self?.perform(name, value: value) }
         playback.chooseOption = { [weak self] kind, id in self?.chooseOption(kind, id: id) }
         playback.importSubtitle = { [weak self] url, slot in self?.mpvController?.addSubtitle(url, slot: slot) }
+        playback.translateSubtitle = { [weak self] in self?.translateMiruroCaption() }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-preview") {
             Task { @MainActor in
@@ -162,6 +168,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         // graph is being destroyed. Release bridge state without publishing to it.
         resetWebPictureInPicture(publishState: false)
         miruroCaptionTask?.cancel()
+        miruroRelayTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         mpvController?.shutdown(); mpvController = nil
         requestTask?.cancel()
@@ -269,7 +276,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         playback.pictureInPictureError = nil
         tracePiP("startRequested")
         webPiPTimeout?.invalidate()
-        webPiPTimeout = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+        webPiPTimeout = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
@@ -396,8 +403,13 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 self.providerIsWeb = resolved.isWeb
                 self.providerWebURL = resolved.webURL
                 if self.episode.source == .miruro {
-                    self.miruroStreams = [NativeStream(url: resolved.url, headers: resolved.headers, captions: resolved.captions)] + resolved.nativeFallbacks
-                    self.startNextMiruroStream()
+                    let primary = NativeStream(url: resolved.url, headers: resolved.headers, captions: resolved.captions, label: resolved.label)
+                    self.miruroAllStreams = [primary] + resolved.nativeFallbacks
+                    self.miruroStreamIndex = 0
+                    self.playback.servers = self.miruroAllStreams.enumerated().map { idx, stream in
+                        PlaybackChoice(id: "miruro-\(idx)", title: stream.label.isEmpty ? "Server \(idx + 1)" : stream.label)
+                    }
+                    self.startMiruroStream(at: 0)
                 } else if resolved.isWeb { self.startFallback(url: resolved.url) }
                 else if self.shouldUseMediaRelay(for: resolved.url) {
                     self.filmRelay?.stop()
@@ -428,32 +440,101 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         }
     }
 
-    private func startNextMiruroStream() {
-        guard active, !miruroStreams.isEmpty else { return }
-        let stream = miruroStreams.removeFirst()
+    private func publishMiruroCaptions() {
+        var list = miruroCaptions.map { PlaybackChoice(id: $0.id, title: $0.title) }
+        for translated in miruroLocalCaptions.keys.filter({ $0.hasPrefix("translated:") }).sorted() {
+            list.append(PlaybackChoice(id: translated, title: "Tiếng Việt · dịch tự động"))
+        }
+        playback.externalSubtitles = list
+    }
+
+    private func startMiruroStream(at index: Int) {
+        guard active, miruroAllStreams.indices.contains(index) else { return }
+        miruroStreamIndex = index
+        let stream = miruroAllStreams[index]
         providerHeaders = stream.headers
-        let captions = stream.captions.enumerated().map { index, caption in
-            AetherSubtitle(id: "miruro-caption-" + String(index), title: caption.title,
+        playback.server = "miruro-\(index)"
+        let captions = stream.captions.enumerated().map { idx, caption in
+            AetherSubtitle(id: "miruro-caption-" + String(idx), title: caption.title,
                            language: caption.language, url: caption.url, headers: caption.headers)
         }
         miruroCaptions = AetherSubtitleClient.preferred(captions)
+        miruroLocalCaptions.removeAll()
+        miruroSelectedCaption = nil
+        miruroSelectedFile = nil
         playback.externalSubtitle = nil
-        playback.externalSubtitles = miruroCaptions.map { PlaybackChoice(id: $0.id, title: $0.title) }
-        showNativePlayer(url: stream.url)
-        if let preferred = miruroCaptions.first(where: { $0.language == "vi" || $0.language == "en" }) {
-            selectMiruroCaption(preferred)
+        playback.canTranslateSubtitle = false
+        playback.subtitleStatus = nil
+        playback.subtitleBusy = false
+        publishMiruroCaptions()
+
+        miruroRelayTask?.cancel()
+        filmRelay?.stop()
+        filmRelay = nil
+
+        let isDirectMP4 = stream.url.pathExtension.lowercased() == "mp4"
+        if isDirectMP4 {
+            showNativePlayer(url: stream.url)
+            autoSelectMiruroCaption()
+            return
+        }
+
+        miruroRelayTask = Task { [weak self] in
+            guard let self else { return }
+            let relay = FilmMediaRelay(origin: stream.url, headers: stream.headers,
+                                       preserveMediaExtensions: true, useSharedCookies: false,
+                                       transportStreamEnvelope: true)
+            relay.onQualities = { [weak self] options in
+                guard let self, self.active else { return }
+                if self.playback.qualities != options { self.playback.qualities = options }
+            }
+            self.filmRelay = relay
+            do {
+                let localURL = try await relay.start(stream.url)
+                guard !Task.isCancelled, self.active else { return }
+                self.showNativePlayer(url: localURL)
+                self.autoSelectMiruroCaption()
+            } catch {
+                guard !Task.isCancelled, self.active else { return }
+                self.filmRelay?.stop()
+                self.filmRelay = nil
+                self.showNativePlayer(url: stream.url)
+                self.autoSelectMiruroCaption()
+            }
         }
     }
 
-    private func selectMiruroCaption(_ caption: AetherSubtitle) {
+    private func autoSelectMiruroCaption() {
+        if let vi = miruroCaptions.first(where: { $0.language == "vi" }) {
+            selectMiruroCaption(vi, automatic: true)
+        } else if let fallback = miruroCaptions.first(where: { $0.language == "en" }) ?? miruroCaptions.first {
+            selectMiruroCaption(fallback, automatic: true)
+        }
+    }
+
+    private func selectMiruroCaption(_ caption: AetherSubtitle, automatic: Bool = false) {
         miruroCaptionTask?.cancel()
         miruroCaptionTask = Task { [weak self, weak player = mpvController] in
             guard let self, let player else { return }
+            self.playback.subtitleBusy = true
+            self.playback.subtitleStatus = "Đang tải phụ đề…"
+            defer { self.playback.subtitleBusy = false }
             do {
-                let file = try await self.captionClient.materialize(caption)
+                let file: URL
+                if let cached = self.miruroLocalCaptions[caption.id] { file = cached }
+                else { file = try await self.captionClient.materialize(caption) }
                 guard !Task.isCancelled, self.active, player === self.mpvController else { return }
+                self.miruroLocalCaptions[caption.id] = file
+                self.miruroSelectedCaption = caption
+                self.miruroSelectedFile = file
                 player.addSubtitle(file, slot: "subtitles")
                 self.playback.externalSubtitle = caption.id
+                let isVietnamese = caption.language == "vi"
+                self.playback.canTranslateSubtitle = !isVietnamese
+                self.playback.subtitleStatus = caption.title
+                if automatic, !isVietnamese {
+                    self.translateMiruroCaption()
+                }
             } catch {
                 guard !Task.isCancelled, self.active, player === self.mpvController else { return }
                 self.playback.subtitleStatus = error.localizedDescription
@@ -461,17 +542,63 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         }
     }
 
-    private func recoverMiruroStream(_ player: MPVPlaybackController) {
-        guard active, mpvController === player, !miruroStreams.isEmpty,
+    private func translateMiruroCaption() {
+        guard active, episode.source == .miruro,
+              let file = miruroSelectedFile, let caption = miruroSelectedCaption,
+              caption.language != "vi", let player = mpvController else { return }
+        miruroCaptionTask?.cancel()
+        miruroCaptionTask = Task { [weak self, weak player] in
+            guard let self, let player else { return }
+            self.playback.subtitleBusy = true
+            self.playback.subtitleStatus = "Đang dịch phụ đề sang tiếng Việt…"
+            defer { self.playback.subtitleBusy = false }
+            do {
+                let translated = try await self.captionClient.translateToVietnamese(file) { [weak self] progress in
+                    Task { @MainActor in
+                        guard let self, self.active, self.playback.subtitleBusy else { return }
+                        self.playback.subtitleStatus = "Đang dịch sang tiếng Việt · \(Int(progress * 100))%"
+                    }
+                }
+                guard !Task.isCancelled, self.active, player === self.mpvController else { return }
+                let translatedID = "translated:" + caption.id
+                self.miruroLocalCaptions[translatedID] = translated
+                self.miruroSelectedFile = translated
+                self.miruroSelectedCaption = nil
+                self.playback.externalSubtitle = translatedID
+                self.playback.canTranslateSubtitle = false
+                self.publishMiruroCaptions()
+                player.addSubtitle(translated, slot: "subtitles")
+                self.playback.subtitleStatus = "Tiếng Việt · dịch tự động"
+            } catch {
+                guard !Task.isCancelled, self.active, player === self.mpvController else { return }
+                self.playback.subtitleStatus = "Chưa dịch được phụ đề: " + error.localizedDescription
+            }
+        }
+    }
+
+    private func switchMiruroStream(to index: Int) {
+        guard active, miruroAllStreams.indices.contains(index),
               !playback.pictureInPicturePending, !playback.pictureInPictureActive else { return }
         miruroCaptionTask?.cancel()
+        miruroRelayTask?.cancel()
+        filmRelay?.stop()
+        filmRelay = nil
         miruroResumePosition = max(0, playback.currentTime)
-        mpvController = nil
-        player.shutdown()
-        player.willMove(toParent: nil)
-        player.view.removeFromSuperview()
-        player.removeFromParent()
-        startNextMiruroStream()
+        if let player = mpvController {
+            mpvController = nil
+            player.shutdown()
+            player.willMove(toParent: nil)
+            player.view.removeFromSuperview()
+            player.removeFromParent()
+        }
+        startMiruroStream(at: index)
+    }
+
+    private func recoverMiruroStream(_ player: MPVPlaybackController) {
+        let nextIndex = miruroStreamIndex + 1
+        guard active, mpvController === player, miruroAllStreams.indices.contains(nextIndex),
+              !playback.pictureInPicturePending, !playback.pictureInPictureActive else { return }
+        switchMiruroStream(to: nextIndex)
     }
 
     private func attemptDirectPlayer() {
@@ -647,7 +774,12 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
 
     private func shouldUseMediaRelay(for url: URL) -> Bool {
         guard episode.source.isMovie else { return false }
+        if providerHeaders["X-StreamC-Hash"] != nil { return true }
+        if let host = url.host?.lowercased(), host.contains("streamc") { return true }
         let ext = url.pathExtension.lowercased()
+        if episode.source == .film4k, (ext == "m3u8" || url.path.lowercased().contains("m3u8") || url.path.contains("/playlist")) {
+            return true
+        }
         if case .film4k = episode.playback {
             return ext == "m3u8" || url.path.hasSuffix("/stream/hls")
         }
@@ -988,14 +1120,33 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
 
     private func chooseOption(_ kind: String, id: String) {
         guard active else { return }
+        if episode.source == .miruro, kind == "server", id.hasPrefix("miruro-"),
+           let idx = Int(id.dropFirst(7)), miruroAllStreams.indices.contains(idx) {
+            if idx != miruroStreamIndex || playback.error != nil {
+                switchMiruroStream(to: idx)
+            }
+            return
+        }
         if let mpvController {
             if episode.source == .miruro, kind == "subtitles" {
                 if let caption = miruroCaptions.first(where: { $0.id == id }) {
-                    selectMiruroCaption(caption)
+                    selectMiruroCaption(caption, automatic: false)
+                    return
+                }
+                if let file = miruroLocalCaptions[id] {
+                    miruroCaptionTask?.cancel()
+                    miruroSelectedFile = file
+                    miruroSelectedCaption = nil
+                    playback.externalSubtitle = id
+                    playback.canTranslateSubtitle = false
+                    mpvController.addSubtitle(file, slot: "subtitles")
                     return
                 }
                 miruroCaptionTask?.cancel()
+                miruroSelectedCaption = nil
+                miruroSelectedFile = nil
                 playback.externalSubtitle = nil
+                playback.canTranslateSubtitle = false
             }
             mpvController.choose(kind, id: id)
             return
@@ -1031,11 +1182,16 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         if let rule = AVTextStyleRule(textMarkupAttributes: attributes) { playerController?.player?.currentItem?.textStyleRules = [rule] }
     }
 
+    private static func isAdFrameURL(_ url: URL?) -> Bool {
+        guard let host = url?.host?.lowercased(), !host.isEmpty else { return false }
+        let blocked = ["doubleclick", "googlesyndication", "adservice", "popads", "exoclick", "juicyads", "trafficjunky", "propellerads", "adsterra"]
+        return blocked.contains(where: { host.contains($0) })
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard active else { return }
-        // The selected embed is navigated into the main WebView by iframeFound.
-        // An advertisement nested inside it must not own the movie or PiP state.
-        if episode.source == .anime, message.webView === fallbackWebView, !message.frameInfo.isMainFrame { return }
+        // Filter out obvious ad iframes while keeping legitimate player iframes active for PiP/native handoff.
+        if message.webView === fallbackWebView, !message.frameInfo.isMainFrame, Self.isAdFrameURL(message.frameInfo.request.url) { return }
         switch message.name {
         case "videoFound":
             #if DEBUG
@@ -1049,9 +1205,9 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             guard sourceWebView === directWebView || fromWebsite,
                   !playback.pictureInPictureActive, !playback.pictureInPicturePending else { return }
             if fromWebsite, websiteOwnsPlayback { return }
-            // A playlist behind a blob is not proof of a native-decodable stream.
-            // The anime website may decrypt or transform those bytes itself.
-            if fromWebsite, episode.source == .anime, details?["provenance"] != "media" { return }
+            // Allow AnimeVietsub HLS/MP4 streams discovered in fallbackWebView to hand off to native mpv
+            // (enabling full native AVPictureInPictureController PiP); if mpv fails to decode,
+            // restoreWebsiteAfterNativeFailure cleanly restores WebKit playback.
             let referer = details?["referer"].flatMap(URL.init(string:)) ?? message.frameInfo.request.url ?? episodeURL
             if UIApplication.shared.applicationState != .active {
                 if !fromWebsite { deferredDirectSource = (url, referer) }
@@ -1229,11 +1385,14 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         <script src="/js/pako.min.js"></script></head><body><script>
         function bytes(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0));}
         function source(data){
-          function item(v){return typeof v==='string'?v:(v&&(v.file||v.src||v.url));}
+          function item(v){
+            if(Array.isArray(v))return item(v[0]);
+            return typeof v==='string'?v:(v&&(v.file||v.src||v.url));
+          }
           try {
             var j=JSON.parse(data), first=j.sources&&j.sources[0], nested=j.player&&j.player.sources&&j.player.sources[0];
             var direct=item(first)||item(nested)||item(j.data)||item(j.link)||item(j.file)||item(j.url);
-            if(direct)return {kind:/\\.(?:m3u8|mp4)(?:$|[?#])/i.test(direct)?'video':'iframe',url:direct};
+            if(direct)return {kind:/\\.(?:m3u8|mp4)(?:$|[?#])/i.test(direct)||/\\/hls\\b/i.test(direct)?'video':'iframe',url:direct};
           } catch(e) {}
           var doc=new DOMParser().parseFromString(data,'text/html');
           var media=doc.querySelector('video[src],source[src]');
@@ -1246,21 +1405,46 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
           var u=normalized.match(/https?:\\/\\/[^\\s\"'<>]+/i);
           return u&&{kind:'iframe',url:u[0]};
         }
+        async function decryptPayload(encrypted, keyText){
+          var digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(keyText));
+          var key=await crypto.subtle.importKey('raw',digest,{name:'AES-CBC'},false,['decrypt']);
+          var clean=encrypted.replace(/-/g,'+').replace(/_/g,'/'); while(clean.length%4)clean+='=';
+          var raw=bytes(clean);
+          var clear=await crypto.subtle.decrypt({name:'AES-CBC',iv:raw.slice(0,16)},key,raw.slice(16));
+          try{return pako.inflateRaw(new Uint8Array(clear),{to:'string'});}catch(e){return new TextDecoder().decode(clear);}
+        }
         async function start(){
           try {
             if(typeof pako==='undefined'){await new Promise((ok,no)=>{var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';s.onload=ok;s.onerror=no;document.head.appendChild(s);});}
-            var hash=atob('\(hash64)'), id=atob('\(film64)'), keyText=atob('\(key64)');
-            var digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(keyText));
-            var key=await crypto.subtle.importKey('raw',digest,{name:'AES-CBC'},false,['decrypt']);
-            var form=new FormData(); form.append('link',hash); form.append('id',id);
-            var response=await fetch('/ajax/player',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:form,credentials:'include'});
-            if(!response.ok) throw Error('HTTP '+response.status);
-            var value=await response.text(), encrypted=value;
-            try { var json=JSON.parse(value); encrypted=json.data||json.link||json.html||value; } catch(e) {}
-            encrypted=encrypted.replace(/-/g,'+').replace(/_/g,'/'); while(encrypted.length%4)encrypted+='=';
-            var raw=bytes(encrypted);
-            var clear=await crypto.subtle.decrypt({name:'AES-CBC',iv:raw.slice(0,16)},key,raw.slice(16));
-            var text; try{text=pako.inflateRaw(new Uint8Array(clear),{to:'string'});}catch(e){text=new TextDecoder().decode(clear);}
+            var hash=atob('\(hash64)'), id=atob('\(film64)'), defaultKey=atob('\(key64)');
+            var endpoints=['/ajax/player?v=2019a','/ajax/player'];
+            var value='', ok=false, lastStatus=0;
+            for(var i=0;i<endpoints.length;i++){
+              var form=new FormData(); form.append('link',hash); form.append('id',id);
+              var response=await fetch(endpoints[i],{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:form,credentials:'include'});
+              lastStatus=response.status;
+              if(response.ok){ value=await response.text(); if(value&&value.trim()){ ok=true; break; } }
+            }
+            if(!ok) throw Error('HTTP '+lastStatus);
+            var text=value, encrypted='', extraKey='';
+            try {
+              var json=JSON.parse(value);
+              if(json.playTech&&typeof json.playTech==='string')extraKey=json.playTech;
+              var candidate=json.data||json.link||json.html;
+              if(typeof candidate==='string'&&!/^https?:\\/\\//i.test(candidate.trim())&&!/^\\s*[\\[{<]/.test(candidate)){
+                encrypted=candidate;
+              }
+            } catch(e) {
+              if(!/^https?:\\/\\//i.test(value.trim())&&!/^\\s*[\\[{<]/.test(value)) encrypted=value;
+            }
+            if(encrypted){
+              var keys=extraKey?[extraKey,defaultKey]:[defaultKey];
+              var decrypted=null;
+              for(var k=0;k<keys.length;k++){
+                try{ decrypted=await decryptPayload(encrypted,keys[k]); break; }catch(e){}
+              }
+              if(decrypted) text=decrypted;
+            }
             var found=source(text); if(!found||!found.url) throw Error('Không tìm thấy nguồn video');
             var absolute=new URL(found.url,location.href).href;
             window.webkit.messageHandlers[found.kind==='video'?'videoFound':'iframeFound'].postMessage(absolute);

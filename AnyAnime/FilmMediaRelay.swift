@@ -135,7 +135,7 @@ final class FilmMediaRelay {
         }
         do {
             var request = URLRequest(url: url)
-            for (name, value) in headers where name != "X-F4K-PT" || url.host == origin.host {
+            for (name, value) in headers where name != "X-StreamC-Hash" && (name != "X-F4K-PT" || url.host == origin.host) {
                 request.setValue(value, forHTTPHeaderField: name)
             }
             // Range is applied AFTER removing the envelope, never to wrapped upstream bytes.
@@ -146,7 +146,8 @@ final class FilmMediaRelay {
             } else {
                 (data, response) = try await session.data(for: request)
                 if let http = response as? HTTPURLResponse, http.statusCode == 200,
-                   !data.starts(with: Data("#EXTM3U".utf8)), data.count < 32 * 1024 * 1024 {
+                   !data.starts(with: Data("#EXTM3U".utf8)), !data.starts(with: Data("#ENC-AESGCM".utf8)),
+                   data.count < 32 * 1024 * 1024 {
                     mediaCache.setObject(data as NSData, forKey: url as NSURL, cost: data.count)
                 }
             }
@@ -163,10 +164,17 @@ final class FilmMediaRelay {
             }
             guard data.count <= 128 * 1024 * 1024 else { send(id, status: 502, body: Data()); return }
             let body: Data, type: String
-            if data.starts(with: Data("#EXTM3U".utf8)), let text = String(data: data, encoding: .utf8) {
-                if text.contains("#EXT-X-STREAM-INF:") { onQualities?(FilmMediaTransform.qualities(text)) }
-                body = Data(FilmMediaTransform.playlist(text, base: http.url ?? url, map: localURL).utf8)
-                type = "application/vnd.apple.mpegurl"
+            let isPlaylistCandidate = data.starts(with: Data("#EXTM3U".utf8)) || data.starts(with: Data("#ENC-AESGCM".utf8))
+            if isPlaylistCandidate, let rawText = String(data: data, encoding: .utf8) {
+                let text = FilmMediaTransform.unwrapEncryptedM3U8(rawText, videoHash: headers["X-StreamC-Hash"])
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#EXTM3U") {
+                    if text.contains("#EXT-X-STREAM-INF:") { onQualities?(FilmMediaTransform.qualities(text)) }
+                    body = Data(FilmMediaTransform.playlist(text, base: http.url ?? url, map: localURL).utf8)
+                    type = "application/vnd.apple.mpegurl"
+                } else {
+                    body = FilmMediaTransform.unwrap(data)
+                    type = http.mimeType ?? "application/octet-stream"
+                }
             } else {
                 body = FilmMediaTransform.unwrap(data)
                 type = body.starts(with: Data("WEBVTT".utf8)) ? "text/vtt" : (body != data ? (body.first == 0x47 ? "video/mp2t" : "video/mp4") : http.mimeType ?? "application/octet-stream")

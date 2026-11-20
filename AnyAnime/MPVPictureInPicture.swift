@@ -98,9 +98,21 @@ final class MPVSoftwareVideoOutput {
         }
         guard result >= 0 else { return }
         // bgr0 has no alpha; sample buffers use opaque BGRA.
-        let bytes = pixels.assumingMemoryBound(to: UInt8.self)
-        for row in 0..<Int(dimensions.1) {
-            for column in 0..<Int(dimensions.0) { bytes[row * stride + column * 4 + 3] = 255 }
+        let width = Int(dimensions.0)
+        let height = Int(dimensions.1)
+        if stride % 4 == 0 {
+            let wordsPerRow = stride / 4
+            let words = pixels.assumingMemoryBound(to: UInt32.self)
+            let alphaMask = UInt32(littleEndian: 0xFF00_0000)
+            for row in 0..<height {
+                let rowBase = row * wordsPerRow
+                for column in 0..<width { words[rowBase + column] |= alphaMask }
+            }
+        } else {
+            let bytes = pixels.assumingMemoryBound(to: UInt8.self)
+            for row in 0..<height {
+                for column in 0..<width { bytes[row * stride + column * 4 + 3] = 255 }
+            }
         }
         let gate = deliveryGate
         DispatchQueue.main.async { [weak self] in

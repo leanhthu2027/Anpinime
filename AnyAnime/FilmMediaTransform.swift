@@ -1,7 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
-/// Normalize PNG-wrapped media used by Film4k and Aether Rock.
-/// This is container normalization, not DRM/key handling.
+/// Normalize PNG-wrapped media and StreamC encrypted HLS playlists.
 enum FilmMediaTransform {
     static func qualities(_ text: String) -> [PlaybackQuality] {
         var values: [String: PlaybackQuality] = [:]
@@ -74,5 +76,48 @@ enum FilmMediaTransform {
         else if let parsed = Int(parts[1]), parsed >= start { last = min(parsed, count - 1) }
         else { return nil }
         return start..<(last + 1)
+    }
+
+    static func hexData(_ hex: String) -> Data? {
+        let chars = Array(hex.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard chars.count >= 2, chars.count % 2 == 0 else { return nil }
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(chars.count / 2)
+        var i = 0
+        while i < chars.count {
+            guard let byte = UInt8(String(chars[i..<(i + 2)]), radix: 16) else { return nil }
+            bytes.append(byte)
+            i += 2
+        }
+        return Data(bytes)
+    }
+
+    /// Decrypt StreamC `#ENC-AESGCM;iv=<24hex>` HLS playlist wrapper using HMAC-SHA256 derived AES-128-GCM key.
+    static func unwrapEncryptedM3U8(_ rawText: String, videoHash: String?) -> String {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("#enc-aesgcm;iv=") else { return rawText }
+        #if canImport(CryptoKit)
+        guard let videoHash = videoHash?.trimmingCharacters(in: .whitespacesAndNewlines), !videoHash.isEmpty else { return rawText }
+        let lines = trimmed.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard lines.count >= 2,
+              let ivRange = lines[0].range(of: #"iv=([0-9a-fA-F]{24})"#, options: [.regularExpression, .caseInsensitive]) else { return rawText }
+        let ivHex = String(lines[0][ivRange].dropFirst(3))
+        let payloadB64 = lines.dropFirst().joined().replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+        guard let iv = hexData(ivHex), iv.count == 12,
+              let cipherWithTag = Data(base64Encoded: payloadB64), cipherWithTag.count > 16 else { return rawText }
+        let hmacKey = SymmetricKey(data: Data("stream-derive-v1".utf8))
+        let mac = HMAC<SHA256>.authenticationCode(for: Data(videoHash.utf8), using: hmacKey)
+        let aesKey = SymmetricKey(data: Data(mac).prefix(16))
+        let ciphertext = cipherWithTag.prefix(cipherWithTag.count - 16)
+        let tag = cipherWithTag.suffix(16)
+        guard let nonce = try? AES.GCM.Nonce(data: iv),
+              let sealed = try? AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag),
+              let plain = try? AES.GCM.open(sealed, using: aesKey),
+              let text = String(data: plain, encoding: .utf8),
+              text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#EXTM3U") else { return rawText }
+        return text
+        #else
+        return rawText
+        #endif
     }
 }

@@ -2,6 +2,9 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 @MainActor
 final class MovieProvider: MovieSourceProviding {
@@ -165,11 +168,19 @@ final class MovieProvider: MovieSourceProviding {
                   let stream = MovieCatalog.legacyStream(row, base: activeDetailURL) else { throw MovieSourceError.noVideo }
             let web = MovieCatalog.url(row["link_embed"] ?? row["embed"], base: activeDetailURL)
             let originHost = activeDetailURL.scheme.flatMap { s in activeDetailURL.host.map { "\(s)://\($0)" } } ?? baseURL.absoluteString
+            if source == .film4k, stream.web, Self.isStreamCEmbed(stream.url),
+               let native = await resolveStreamC(embedURL: stream.url, refererOrigin: originHost) {
+                return native
+            }
             return ResolvedPlayback(url: stream.url, headers: ["Referer": originHost + "/", "Origin": originHost, "User-Agent": AnimeService.userAgent],
                                     webURL: stream.web ? web : nil, isWeb: stream.web)
         case .directStream(let url, let webURL, let isWeb, let referer):
             let refURL = referer ?? baseURL
             let originHost = refURL.scheme.flatMap { s in refURL.host.map { "\(s)://\($0)" } } ?? baseURL.absoluteString
+            if source == .film4k, isWeb, Self.isStreamCEmbed(url),
+               let native = await resolveStreamC(embedURL: url, refererOrigin: originHost) {
+                return native
+            }
             return ResolvedPlayback(url: url, headers: ["Referer": originHost + "/", "Origin": originHost, "User-Agent": AnimeService.userAgent],
                                     webURL: webURL, isWeb: isWeb)
         case .animePage:
@@ -181,6 +192,146 @@ final class MovieProvider: MovieSourceProviding {
         guard source["drm"] == nil, let url = URL(string: MovieCatalog.text(source["url"])) else { return false }
         return ["m3u8", "mp4", "m4v", "mov"].contains(url.pathExtension.lowercased())
     }
+
+    static func isStreamCEmbed(_ url: URL) -> Bool {
+        let lower = url.absoluteString.lowercased()
+        if lower.contains("streamc.xyz") { return true }
+        if lower.contains("/embed.php"), (lower.contains("?hash=") || lower.contains("&hash=")) { return true }
+        return false
+    }
+
+    private func resolveStreamC(embedURL: URL, refererOrigin: String) async -> ResolvedPlayback? {
+        #if canImport(CryptoKit)
+        var pageReq = URLRequest(url: embedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        pageReq.setValue(AnimeService.userAgent, forHTTPHeaderField: "User-Agent")
+        pageReq.setValue(refererOrigin.hasSuffix("/") ? refererOrigin : refererOrigin + "/", forHTTPHeaderField: "Referer")
+        pageReq.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        guard let (htmlData, htmlResp) = try? await session.data(for: pageReq),
+              let htmlHTTP = htmlResp as? HTTPURLResponse, (200..<300).contains(htmlHTTP.statusCode),
+              let html = String(data: htmlData, encoding: .utf8), !html.isEmpty else { return nil }
+
+        let finalEmbed = htmlHTTP.url ?? embedURL
+        let embedOrigin: String = {
+            let scheme = finalEmbed.scheme ?? "https"
+            let host = finalEmbed.host ?? "embed1.streamc.xyz"
+            let port = finalEmbed.port.map { ":\($0)" } ?? ""
+            return "\(scheme)://\(host)\(port)"
+        }()
+
+        // Parse <script id="stream-bootstrap">{...}</script>
+        var rawAPI = finalEmbed.absoluteString
+        if let regex = try? NSRegularExpression(pattern: #"<script[^>]*id=["']stream-bootstrap["'][^>]*>(.*?)</script>"#,
+                                                options: [.caseInsensitive, .dotMatchesLineSeparators]),
+           let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+           let range = Range(match.range(at: 1), in: html) {
+            let body = String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let cfgData = body.data(using: .utf8),
+               let cfg = try? JSONSerialization.jsonObject(with: cfgData) as? [String: Any],
+               let api = (cfg["api"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !api.isEmpty {
+                rawAPI = api
+            }
+        }
+        guard let apiURL = URL(string: rawAPI, relativeTo: finalEmbed)?.absoluteURL else { return nil }
+        let frameOrigin = refererOrigin.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let frameRef = frameOrigin + "/"
+
+        var streamHeaders: [String: String] = [
+            "Origin": embedOrigin,
+            "Referer": embedOrigin + "/",
+            "User-Agent": AnimeService.userAgent
+        ]
+        if let hash = URLComponents(url: finalEmbed, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "hash" })?.value,
+           !hash.isEmpty {
+            streamHeaders["X-StreamC-Hash"] = hash
+        }
+
+        let bootstrapBody: [String: Any] = [
+            "action": "bootstrap",
+            "referrer": frameRef,
+            "frame_origins": [frameOrigin],
+            "request_grant": true,
+            "playlist_format": "hls",
+            "pretty_url": true,
+            "path_chunks": true,
+            "bootstrap_format": "json"
+        ]
+        guard let bootResp = await postStreamCJSON(apiURL: apiURL, body: bootstrapBody, origin: embedOrigin, referer: finalEmbed.absoluteString) else { return nil }
+
+        // Fast-path: StreamC r25+ returns preissued.playlist directly in bootstrap response
+        if (bootResp["turnstileEnabled"] as? Bool) != true,
+           let preissued = bootResp["preissued"] as? [String: Any],
+           let rawPre = (preissued["playlist"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawPre.isEmpty, rawPre != "null",
+           let playlistURL = URL(string: rawPre, relativeTo: apiURL)?.absoluteURL {
+            return ResolvedPlayback(url: playlistURL, headers: streamHeaders, webURL: finalEmbed, isWeb: false)
+        }
+
+        // Standard path: decrypt bootstrapEnvelope or use direct bootstrap token, then POST action=issue
+        let bootstrapToken: Any? = {
+            if let obj = bootResp["bootstrap"] as? [String: Any] { return obj }
+            if let str = (bootResp["bootstrap"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !str.isEmpty, str != "null" { return str }
+            if let env = bootResp["bootstrapEnvelope"] as? [String: Any] {
+                return Self.decryptStreamCBootstrapEnvelope(env, apiURL: apiURL.absoluteString)
+            }
+            return nil
+        }()
+        guard let bootstrapToken else { return nil }
+
+        let issueBody: [String: Any] = [
+            "action": "issue",
+            "bootstrap": bootstrapToken,
+            "turnstile_response": NSNull(),
+            "playlist_format": "hls",
+            "pretty_url": true,
+            "path_chunks": true,
+            "frame_origins": [frameOrigin]
+        ]
+        guard let issueResp = await postStreamCJSON(apiURL: apiURL, body: issueBody, origin: embedOrigin, referer: finalEmbed.absoluteString),
+              (issueResp["turnstileRequired"] as? Bool) != true,
+              let rawPlaylist = (issueResp["playlist"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawPlaylist.isEmpty, rawPlaylist != "null",
+              let playlistURL = URL(string: rawPlaylist, relativeTo: apiURL)?.absoluteURL else { return nil }
+
+        return ResolvedPlayback(url: playlistURL, headers: streamHeaders, webURL: finalEmbed, isWeb: false)
+        #else
+        return nil
+        #endif
+    }
+
+    #if canImport(CryptoKit)
+    private func postStreamCJSON(apiURL: URL, body: [String: Any], origin: String, referer: String) async -> [String: Any]? {
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        var req = URLRequest(url: apiURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        req.httpMethod = "POST"
+        req.httpBody = payload
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(AnimeService.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(origin, forHTTPHeaderField: "Origin")
+        req.setValue(referer, forHTTPHeaderField: "Referer")
+        guard let (data, resp) = try? await session.data(for: req),
+              let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json
+    }
+
+    private static func decryptStreamCBootstrapEnvelope(_ env: [String: Any], apiURL: String) -> [String: Any]? {
+        guard let ivB64 = env["iv"] as? String,
+              let ctB64 = env["ciphertext"] as? String,
+              let tagB64 = env["tag"] as? String,
+              let iv = Data(base64Encoded: ivB64),
+              let ciphertext = Data(base64Encoded: ctB64),
+              let tag = Data(base64Encoded: tagB64) else { return nil }
+        let keyDigest = SHA256.hash(data: Data("stream-bootstrap-v1\n\(apiURL)".utf8))
+        let key = SymmetricKey(data: Data(keyDigest))
+        guard let nonce = try? AES.GCM.Nonce(data: iv),
+              let sealed = try? AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag),
+              let plain = try? AES.GCM.open(sealed, using: key, authenticating: Data(apiURL.utf8)),
+              let json = try? JSONSerialization.jsonObject(with: plain) as? [String: Any] else { return nil }
+        return json
+    }
+    #endif
 
     private func refreshTicket(force: Bool) async throws {
         if !force, ticketExpiry > Date().addingTimeInterval(60) { return }
