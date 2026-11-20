@@ -559,9 +559,8 @@ struct PlayerView: View {
     }
     private func retry() { requestReplacement(.retry) }
     private func requestReplacement(_ replacement: Replacement) {
-        if current.source == .aether && (playback.pictureInPictureActive || playback.pictureInPicturePending) {
-            // Keep the old WebKit owner alive until the system confirms PiP has
-            // stopped, before creating the next episode's web view.
+        if playback.engine != "AVPlayer", playback.pictureInPictureActive || playback.pictureInPicturePending {
+            // Keep the old player alive until the system finishes closing PiP.
             pendingReplacement = replacement
             playback.send("pipStop")
             return

@@ -25,6 +25,7 @@ private enum AIDramaLibraryLaunchSupport {
 struct RootView: View {
     @EnvironmentObject private var service: AnimeService
     @StateObject private var aiDramaStore = AIDramaCatalogStore()
+    @AppStorage("AnPinime.selectedAnimeSource") private var selectedAnimeSourceRaw = ContentSource.anime.rawValue
     @AppStorage("AnPinime.selectedLibrary") private var selectedLibraryRaw = AppLibrary.anime.rawValue
     @AppStorage("AnPinime.movieSource") private var selectedMovieSourceRaw = ContentSource.film4k.rawValue
     @State private var enteredLibrary = false
@@ -80,7 +81,7 @@ struct RootView: View {
         }
         .tint(.anpinimeAccent)
         .background {
-            if enteredLibrary && selectedLibrary == .anime {
+            if enteredLibrary && selectedLibrary == .anime && service.source == .anime {
                 VerificationGate(browser: service.website)
             }
         }
@@ -93,6 +94,7 @@ struct RootView: View {
         }
         .onChange(of: service.source) { source in
             if source.isMovie { selectedMovieSourceRaw = source.rawValue }
+            else { selectedAnimeSourceRaw = source.rawValue }
         }
         .onDisappear {
             transitionTask?.cancel()
@@ -110,7 +112,7 @@ struct RootView: View {
 
     private func activateSource(for library: AppLibrary) {
         switch library {
-        case .anime: service.selectSource(.anime)
+        case .anime: service.selectSource(selectedAnimeSourceRaw == ContentSource.miruro.rawValue ? .miruro : .anime)
         case .movie: service.selectSource(selectedMovieSource)
         case .aiDrama: break
         }
@@ -163,7 +165,7 @@ struct RootView: View {
                 .tabItem { Label("Thể loại", systemImage: "square.grid.2x2.fill") }
                 .tag(2)
 
-            if !service.source.isMovie {
+            if service.source == .anime {
                 NavigationView { AnimeScheduleView() }
                     .navigationViewStyle(.stack)
                     .tabItem { Label("Lịch chiếu", systemImage: "calendar") }
@@ -292,25 +294,24 @@ struct HomeView: View {
                     Button { onChooseLibrary?() } label: {
                         Image(service.source.isMovie ? "MovieLogo" : "AppLogo").resizable().scaledToFit().frame(width: 34, height: 34)
                     }.accessibilityLabel("Đổi thư viện")
-                    if service.source.isMovie {
-                        Menu {
-                            ForEach([ContentSource.film4k, .aether, .kkphim]) { source in
-                                Button { service.selectSource(source) } label: {
-                                    Label(source.title, systemImage: source == service.source ? "checkmark.circle.fill" : "circle")
-                                }
-                                .accessibilityIdentifier("movie.source." + source.rawValue)
+                    let sources: [ContentSource] = service.source.isMovie ? [.film4k, .aether, .kkphim] : [.anime, .miruro]
+                    Menu {
+                        ForEach(sources) { source in
+                            Button { service.selectSource(source) } label: {
+                                Label(source.title, systemImage: source == service.source ? "checkmark.circle.fill" : "circle")
                             }
-                        } label: {
-                            HStack(spacing: 5) { Text(service.source.title).font(.caption.weight(.semibold)); Image(systemName: "chevron.down").font(.caption2) }
-                                .padding(.horizontal, 10).padding(.vertical, 8).cinemaGlass(cornerRadius: 16, interactive: true)
+                            .accessibilityIdentifier((service.source.isMovie ? "movie" : "anime") + ".source." + source.rawValue)
                         }
-                        .accessibilityIdentifier("movie.source.choose")
-                        .accessibilityLabel("Nguồn phim")
-                        .accessibilityValue(service.source.title)
+                    } label: {
+                        HStack(spacing: 5) { Text(service.source.title).font(.caption.weight(.semibold)); Image(systemName: "chevron.down").font(.caption2) }
+                            .padding(.horizontal, 10).padding(.vertical, 8).cinemaGlass(cornerRadius: 16, interactive: true)
                     }
+                    .accessibilityIdentifier(service.source.isMovie ? "movie.source.choose" : "anime.source.choose")
+                    .accessibilityLabel(service.source.isMovie ? "Nguồn phim" : "Nguồn anime")
+                    .accessibilityValue(service.source.title)
                 }
                 Spacer()
-                if !service.source.isMovie {
+                if service.source == .anime {
                     NavigationLink(destination: AnimeScheduleView()) { Image(systemName: "calendar").frame(width: 42, height: 42) }
                         .accessibilityLabel("Lịch chiếu anime")
                 }

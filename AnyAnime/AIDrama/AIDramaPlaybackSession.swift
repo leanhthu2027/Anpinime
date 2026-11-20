@@ -98,7 +98,10 @@ final class AIDramaPlaybackSession: ObservableObject {
 
     var selectedIndex: Int? { playlist.episodes.firstIndex { $0.id == selectedEpisodeID } }
     var selectedEpisode: AIDramaEpisode? { selectedIndex.map { playlist.episodes[$0] } }
-    private var pictureInPictureOwnsPlayback: Bool { playback?.pictureInPictureActive == true || playback?.pictureInPicturePending == true }
+    private var pictureInPictureOwnsPlayback: Bool {
+        playback?.pictureInPictureActive == true || playback?.pictureInPicturePending == true
+            || controller?.isAwaitingAutomaticPiP == true
+    }
     private var mayPlay: Bool { !preloading && presented && (!sceneInBackground || pictureInPictureOwnsPlayback) && !transitioning && (attached || pictureInPictureOwnsPlayback) && !manuallyPaused }
     private var mayResolve: Bool { presented && sceneActive && !transitioning }
 
@@ -138,7 +141,7 @@ final class AIDramaPlaybackSession: ObservableObject {
         guard backgroundTransition == nil else { return }
         backgroundTransition = Task { @MainActor [weak self] in
             // MPV owns the AVKit transition. Let all didEnterBackground observers
-            // mark a pending PiP before deciding whether its decoder may be released.
+            // begin waiting for AVKit before deciding whether to release it.
             await Task.yield()
             guard !Task.isCancelled, let self else { return }
             self.backgroundTransition = nil
@@ -330,6 +333,10 @@ final class AIDramaPlaybackSession: ObservableObject {
         state.userPaused = true
         let player = MPVPlaybackController(url: stream.url, headers: stream.headers, playback: state, preloading: preloading, resizesEmbeddedSurface: true, initialViewport: pendingViewport)
         pendingViewport = nil
+        player.onAutomaticPiPWaitEnded = { [weak self, weak player] in
+            guard let self, let player, self.controller === player, self.sceneInBackground else { return }
+            self.reconcile()
+        }
         player.onViewportChange = { [weak self, weak player] size in
             guard let self, self.generation == token, self.controller === player else { return }
             self.rebuildForViewport(size)

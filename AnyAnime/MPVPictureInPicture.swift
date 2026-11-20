@@ -128,6 +128,7 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private let displayHost = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
     private let output = MPVSoftwareVideoOutput()
     private let playback: PlaybackState
+    private let maximumOutputEdge: CGFloat?
     private var controller: AVPictureInPictureController?
     private var timebase: CMTimebase?
     private var bootstrapFrame: CVPixelBuffer?
@@ -179,10 +180,11 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     private(set) var visibleFrameCount = 0
     #endif
 
-    init(playback: PlaybackState, sourceView: UIView, command: @escaping (String, Double) -> Void,
+    init(playback: PlaybackState, sourceView: UIView, maximumOutputEdge: CGFloat?, command: @escaping (String, Double) -> Void,
          restoreVideo: @escaping () -> Void, finished: @escaping () -> Void) {
         self.playback = playback; self.command = command; self.restoreVideo = restoreVideo; self.finished = finished
         self.sourceView = sourceView
+        self.maximumOutputEdge = maximumOutputEdge
         super.init()
         var clock: CMTimebase?
         if CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &clock) == noErr {
@@ -220,9 +222,12 @@ final class MPVPictureInPicture: NSObject, AVPictureInPictureControllerDelegate,
     }
 
     private var inlineOutputSize: CGSize {
-        NativePiPPolicy.inlineOutputSize(source: decodedSize,
+        let size = NativePiPPolicy.inlineOutputSize(source: decodedSize,
             viewport: sourceView?.bounds.size ?? decodedSize,
             displayScale: sourceView?.window?.screen.nativeScale ?? 1)
+        guard let maximumOutputEdge else { return size }
+        let scale = min(1, maximumOutputEdge / max(size.width, size.height))
+        return CGSize(width: size.width * scale, height: size.height * scale)
     }
 
     private var visibleInlineSource: Bool {

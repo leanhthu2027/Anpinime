@@ -407,7 +407,7 @@ struct AnimeDetailView: View {
     private func loadAsync(forceRefresh: Bool) async {
         message = ""
         do {
-            if anime.source.isMovie {
+            if anime.source != .anime {
                 loading = detail == nil
                 let full = try await service.detail(for: anime)
                 try Task.checkCancellation()

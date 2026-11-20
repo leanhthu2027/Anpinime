@@ -1,11 +1,12 @@
 import Foundation
 
 enum ContentSource: String, CaseIterable, Identifiable {
-    case anime, film4k, aether, kkphim
+    case anime, miruro, film4k, aether, kkphim
     var id: String { rawValue }
     var title: String {
         switch self {
         case .anime: return "AnimeVietsub"
+        case .miruro: return "Miruro"
         case .film4k: return "Anpinime Free"
         case .aether: return "Anpinime VIP"
         case .kkphim: return "Anpinime dự phòng"
@@ -14,12 +15,13 @@ enum ContentSource: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .anime: return "Anime"
+        case .miruro: return "Miruro"
         case .film4k: return "Anpinime Free"
         case .aether: return "Anpinime VIP"
         case .kkphim: return "Anpinime dự phòng"
         }
     }
-    var isMovie: Bool { self != .anime }
+    var isMovie: Bool { self != .anime && self != .miruro }
 }
 
 /// Presentation only: provider identifiers, URLs and saved history stay unchanged.
@@ -42,11 +44,26 @@ enum EpisodePlayback: Hashable {
     case directStream(url: URL, webURL: URL?, isWeb: Bool, referer: URL?)
 }
 
+struct RemoteCaption {
+    let title: String
+    let language: String
+    let url: URL
+    let headers: [String: String]
+}
+
+struct NativeStream {
+    let url: URL
+    let headers: [String: String]
+    let captions: [RemoteCaption]
+}
+
 struct ResolvedPlayback {
     let url: URL
     let headers: [String: String]
     let webURL: URL?
     let isWeb: Bool
+    var nativeFallbacks: [NativeStream] = []
+    var captions: [RemoteCaption] = []
 }
 
 struct PlaybackChoice: Identifiable, Hashable {

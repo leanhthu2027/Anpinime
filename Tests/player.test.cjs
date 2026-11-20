@@ -193,7 +193,11 @@ assert(webPiP.messages.some(m => m.name === 'mediaState' && m.value.pipSupported
 webPiP.command('pipAutomatically');
 assert.equal(webPiP.w.presentationCalls.length, 0, 'Automatic requests wait for the app preference');
 webPiP.command('automaticPiP', 1);
-webPiP.command('pipAutomatically');
+const targetSession = webPiP.messages.filter(m => m.name === 'mediaState').at(-1).value.pipSessionID;
+webPiP.w.__anpinimeRequestPiP({name: 'pipAutomatically', sessionID: 'stale-frame', requestID: 'wrong'});
+assert.equal(webPiP.w.presentationCalls.length, 0, 'A stale frame cannot open PiP');
+webPiP.w.__anpinimeRequestPiP({name: 'pipAutomatically', sessionID: targetSession, requestID: 'home'});
+
 assert.equal(webPiP.video.webkitPresentationMode, 'picture-in-picture', 'An enabled background request reaches the actual video');
 webPiP.command('pipStop');
 webPiP.w.presentationCalls.length = 0;

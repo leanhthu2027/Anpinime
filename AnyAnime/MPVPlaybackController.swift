@@ -10,6 +10,7 @@ final class MPVPlaybackController: UIViewController {
     private let playback: PlaybackState
     private let url: URL
     private let headers: [String: String]
+    private let startAt: Double
     private var handle: OpaquePointer?
     private var timer: Timer?
     private let surface = MPVSurface()
@@ -22,8 +23,11 @@ final class MPVPlaybackController: UIViewController {
     var onViewportChange: ((CGSize) -> Void)?
     private var automaticPiPPrepared = false
     private var automaticPlaybackIntent = false
-    private var automaticInlineUnavailable = false
+    private var automaticInlineFailures = 0
+    private var automaticInlineRetryAt: TimeInterval = 0
     private var automaticBackgroundGrace: Task<Void, Never>?
+    var isAwaitingAutomaticPiP: Bool { automaticBackgroundGrace != nil }
+    var onAutomaticPiPWaitEnded: (() -> Void)?
     private var backgroundPiPSession = NativePiPBackgroundSession()
     private var wasInBackground = false
     private var manuallyRequestedPiP = false
@@ -68,8 +72,9 @@ final class MPVPlaybackController: UIViewController {
     var onPictureInPictureEnded: (() -> Void)?
     private let piPDiagnosticSessionID = UUID().uuidString
 
-    init(url: URL, headers: [String: String], playback: PlaybackState, preloading: Bool = false, resizesEmbeddedSurface: Bool = false, initialViewport: CGSize? = nil) {
+    init(url: URL, headers: [String: String], playback: PlaybackState, preloading: Bool = false, resizesEmbeddedSurface: Bool = false, initialViewport: CGSize? = nil, startAt: Double = 0) {
         self.initialViewport = initialViewport
+        self.startAt = startAt
         self.resizesEmbeddedSurface = resizesEmbeddedSurface
         self.preloading = preloading
         self.url = url; self.headers = headers; self.playback = playback; self.userPaused = playback.userPaused
@@ -115,6 +120,9 @@ final class MPVPlaybackController: UIViewController {
         let extra = headers.filter { !["User-Agent", "Referer"].contains($0.key) }
             .sorted { $0.key < $1.key }.map { ($0.key + ": " + $0.value).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: ",", with: "\\,") }.joined(separator: ",")
         if !extra.isEmpty { mpv_set_option_string(context, "http-header-fields", extra) }
+        if startAt.isFinite, startAt > 0 {
+            mpv_set_option_string(context, "start", String(startAt))
+        }
         let status = mpv_initialize(context)
         guard status >= 0 else { fail("Không khởi tạo được mpv: " + String(cString: mpv_error_string(status))); return }
         #if DEBUG
@@ -207,7 +215,9 @@ final class MPVPlaybackController: UIViewController {
     }
 
     private var automaticPiPEnabled: Bool {
-        !preloading && !automaticInlineUnavailable && (UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true)
+        !preloading && automaticInlineFailures < 2 &&
+            ProcessInfo.processInfo.systemUptime >= automaticInlineRetryAt &&
+            (UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true)
     }
 
     private var playingForPiP: Bool {
@@ -276,7 +286,8 @@ final class MPVPlaybackController: UIViewController {
         piPViewport = view.bounds.size
         snapshotRetry = NativePiPSnapshotRetry(); snapshotRequestedAt = nil
         playback.pictureInPictureError = nil
-        let pip = MPVPictureInPicture(playback: playback, sourceView: view, command: { [weak self] name, value in
+        let pip = MPVPictureInPicture(playback: playback, sourceView: view,
+            maximumOutputEdge: automaticInlineFailures > 0 ? 1280 : nil, command: { [weak self] name, value in
             guard let self, self.piPGeneration == generation else { return }
             if name == "pipOutput" {
                 self.set("hwdec", "videotoolbox-copy"); self.set("vo", "libmpv")
@@ -329,10 +340,10 @@ final class MPVPlaybackController: UIViewController {
             guard let self, self.piPGeneration == generation else { return }
             self.tracePiP(event)
             if event == "outputUnavailable" {
-                // Do not repeatedly interrupt a working GPU player if this
-                // device cannot sustain the inline sample output. Manual retry
-                // remains available and explicitly starts a new attempt.
-                self.automaticInlineUnavailable = true
+                // One automatic retry after returning to GPU, using a smaller
+                // output. A persistent renderer failure must not loop.
+                self.automaticInlineFailures += 1
+                self.automaticInlineRetryAt = ProcessInfo.processInfo.systemUptime + 2
                 self.automaticPlaybackIntent = false
             }
             if event == "firstFrameReady" || event == "outputPrimed" { self.updateAutomaticPiPReadiness() }
@@ -435,6 +446,7 @@ final class MPVPlaybackController: UIViewController {
                 guard !Task.isCancelled, let self, self.piPGeneration == generation else { return }
                 self.automaticBackgroundGrace = nil
                 self.pauseIfBackgroundWithoutPiP()
+                self.onAutomaticPiPWaitEnded?()
             }
         } else { pauseIfBackgroundWithoutPiP() }
     }
@@ -563,7 +575,8 @@ final class MPVPlaybackController: UIViewController {
             guard playback.pictureInPictureSupported,
                   NativePiPPolicy.canBootstrapFrame(playing: playingForPiP, manualRequest: true,
                     decoderReady: decoderReadyForPiP, sourceAttached: viewIfLoaded?.window != nil) else { return }
-            automaticInlineUnavailable = false
+            automaticInlineRetryAt = 0
+            if automaticInlineFailures >= 2 { automaticInlineFailures = 1 }
             manuallyRequestedPiP = true
             automaticPiPPrepared = false
             preparePictureInPicture()

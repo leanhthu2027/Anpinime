@@ -58,6 +58,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     private var nativeFallbackPosition = 0.0
     private var websiteOwnsPlayback = false
     private var webPiPConfigured = false
+    private var webPiPFrame: WKFrameInfo?
     private var webPiPSessionID: String?
     private var webPiPRequestID: String?
     private var webPiPTimeout: Timer?
@@ -77,6 +78,12 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     private var mediaTracksLoaded = false
     private var filmRelay: FilmMediaRelay?
     private var trackTask: Task<Void, Never>?
+    private var miruroStreams: [NativeStream] = []
+    private var miruroCaptions: [AetherSubtitle] = []
+    private var miruroCaptionTask: Task<Void, Never>?
+    private var miruroResumePosition = 0.0
+    private let captionClient = AetherSubtitleClient()
+
     private var audioOptions: [String: AVMediaSelectionOption] = [:]
     private var subtitleOptions: [String: AVMediaSelectionOption] = [:]
 
@@ -132,7 +139,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         for name in ["AnPinime.sourceWillChange", "AnPinime.libraryWillChange", "AnPinime.playerWillStart"] {
             NotificationCenter.default.addObserver(self, selector: #selector(endForReplacement), name: Notification.Name(name), object: nil)
         }
-        if episode.source.isMovie { attemptProviderPlayer() }
+        if episode.source != .anime { attemptProviderPlayer() }
         else { attemptDirectPlayer() }
     }
 
@@ -150,7 +157,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         active = false
         retainedForPiP = nil
         if let requestID = avRestoreHandshake.pendingID { completeAVRestore(requestID, success: false) }
-        resetWebPictureInPicture()
+        // SwiftUI can call shutdown from dismantleUIViewController while its
+        // graph is being destroyed. Release bridge state without publishing to it.
+        resetWebPictureInPicture(publishState: false)
+        miruroCaptionTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         mpvController?.shutdown(); mpvController = nil
         requestTask?.cancel()
@@ -196,9 +206,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         perform("automaticPiP", value: automatic ? 1 : 0)
     }
 
-    private func resetWebPictureInPicture() {
+    private func resetWebPictureInPicture(publishState: Bool = true) {
         webPiPTimeout?.invalidate(); webPiPTimeout = nil
-        webPiPSessionID = nil; webPiPRequestID = nil
+        webPiPSessionID = nil; webPiPRequestID = nil; webPiPFrame = nil
+        guard publishState else { return }
         playback.pictureInPicturePending = false
         playback.pictureInPictureActive = false
         playback.pictureInPictureSupported = false
@@ -251,14 +262,24 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                     error: self.webPictureInPictureError("timeout"))
             }
         }
-        webView.evaluateJavaScript("window.postMessage(\(json),'*')") { [weak self, weak webView] _, error in
-            guard let self, let webView, webView === self.fallbackWebView, error != nil else { return }
-            self.finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
-                error: self.webPictureInPictureError("evaluation"))
+        let frame = webPiPFrame
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView, self.active, webView === self.fallbackWebView,
+                  self.webPiPRequestID == requestID else { return }
+            do {
+                // Call the selected video frame directly. postMessage adds
+                // another browser turn, which may be suspended on Home.
+                _ = try await webView.callAsyncJavaScript(
+                    "window.__anpinimeRequestPiP && window.__anpinimeRequestPiP(command)",
+                    arguments: ["command": payload], in: frame, contentWorld: .page)
+            } catch {
+                self.finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
+                    error: self.webPictureInPictureError("evaluation"))
+            }
         }
     }
 
-    private func updateWebPictureInPicture(_ state: [String: Any]) {
+    private func updateWebPictureInPicture(_ state: [String: Any], frame: WKFrameInfo) {
         guard let sessionID = state["pipSessionID"] as? String, !sessionID.isEmpty else { return }
         let requestID = state["pipRequestID"] as? String ?? ""
         if playback.pictureInPicturePending || playback.pictureInPictureActive {
@@ -266,6 +287,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         } else if sessionID != webPiPSessionID {
             webPiPSessionID = sessionID; webPiPRequestID = nil
         }
+        webPiPFrame = frame
         playback.pictureInPictureSupported = (state["pipSupported"] as? Bool) == true
         if (state["pipActive"] as? Bool) == true {
             // WebKit can enter PiP through its own controls/system transition.
@@ -356,7 +378,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 self.providerHeaders = resolved.headers
                 self.providerIsWeb = resolved.isWeb
                 self.providerWebURL = resolved.webURL
-                if resolved.isWeb { self.startFallback(url: resolved.url) }
+                if self.episode.source == .miruro {
+                    self.miruroStreams = [NativeStream(url: resolved.url, headers: resolved.headers, captions: resolved.captions)] + resolved.nativeFallbacks
+                    self.startNextMiruroStream()
+                } else if resolved.isWeb { self.startFallback(url: resolved.url) }
                 else if self.shouldUseMediaRelay(for: resolved.url) {
                     self.filmRelay?.stop()
                     var preserveExtensions = false
@@ -384,6 +409,52 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                 else { self.playback.error = error.localizedDescription }
             }
         }
+    }
+
+    private func startNextMiruroStream() {
+        guard active, !miruroStreams.isEmpty else { return }
+        let stream = miruroStreams.removeFirst()
+        providerHeaders = stream.headers
+        let captions = stream.captions.enumerated().map { index, caption in
+            AetherSubtitle(id: "miruro-caption-" + String(index), title: caption.title,
+                           language: caption.language, url: caption.url, headers: caption.headers)
+        }
+        miruroCaptions = AetherSubtitleClient.preferred(captions)
+        playback.externalSubtitle = nil
+        playback.externalSubtitles = miruroCaptions.map { PlaybackChoice(id: $0.id, title: $0.title) }
+        showNativePlayer(url: stream.url)
+        if let preferred = miruroCaptions.first(where: { $0.language == "vi" || $0.language == "en" }) {
+            selectMiruroCaption(preferred)
+        }
+    }
+
+    private func selectMiruroCaption(_ caption: AetherSubtitle) {
+        miruroCaptionTask?.cancel()
+        miruroCaptionTask = Task { [weak self, weak player = mpvController] in
+            guard let self, let player else { return }
+            do {
+                let file = try await self.captionClient.materialize(caption)
+                guard !Task.isCancelled, self.active, player === self.mpvController else { return }
+                player.addSubtitle(file, slot: "subtitles")
+                self.playback.externalSubtitle = caption.id
+            } catch {
+                guard !Task.isCancelled, self.active, player === self.mpvController else { return }
+                self.playback.subtitleStatus = error.localizedDescription
+            }
+        }
+    }
+
+    private func recoverMiruroStream(_ player: MPVPlaybackController) {
+        guard active, mpvController === player, !miruroStreams.isEmpty,
+              !playback.pictureInPicturePending, !playback.pictureInPictureActive else { return }
+        miruroCaptionTask?.cancel()
+        miruroResumePosition = max(0, playback.currentTime)
+        mpvController = nil
+        player.shutdown()
+        player.willMove(toParent: nil)
+        player.view.removeFromSuperview()
+        player.removeFromParent()
+        startNextMiruroStream()
     }
 
     private func attemptDirectPlayer() {
@@ -577,7 +648,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         playback.loading = true
         playback.error = nil
         var headers = ["User-Agent": AnimeService.userAgent, "Referer": (referer ?? episodeURL).absoluteString]
-        if episode.source.isMovie {
+        if episode.source != .anime {
             headers.merge(providerHeaders) { _, provider in provider }
             if let referer {
                 headers["Referer"] = referer.absoluteString
@@ -594,13 +665,19 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         #endif
         if useMPV {
             if !cookies.isEmpty { headers["Cookie"] = HTTPCookie.requestHeaderFields(with: cookies)["Cookie"] }
-            let controller = MPVPlaybackController(url: url, headers: headers, playback: playback)
+            let controller = MPVPlaybackController(url: url, headers: headers, playback: playback, startAt: miruroResumePosition)
             controller.onPictureInPictureEnded = { [weak self, weak controller] in
                 guard let self, let controller, self.mpvController === controller else { return }
                 self.finishDeferredShutdown()
             }
             let canRestoreWebsite = episode.source == .anime || fallbackWebView != nil || providerWebURL != nil
-            if canRestoreWebsite {
+            if episode.source == .miruro {
+                controller.onFailure = { [weak self, weak controller] _ in
+                    Task { @MainActor in
+                        if let controller { self?.recoverMiruroStream(controller) }
+                    }
+                }
+            } else if canRestoreWebsite {
                 controller.onFailure = { [weak self, weak controller] _ in
                     Task { @MainActor in
                         guard let self, let controller, self.mpvController === controller else { return }
@@ -894,7 +971,18 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
 
     private func chooseOption(_ kind: String, id: String) {
         guard active else { return }
-        if let mpvController { mpvController.choose(kind, id: id); return }
+        if let mpvController {
+            if episode.source == .miruro, kind == "subtitles" {
+                if let caption = miruroCaptions.first(where: { $0.id == id }) {
+                    selectMiruroCaption(caption)
+                    return
+                }
+                miruroCaptionTask?.cancel()
+                playback.externalSubtitle = nil
+            }
+            mpvController.choose(kind, id: id)
+            return
+        }
         guard let item = playerController?.player?.currentItem else {
             let payload = ["type": "AnPinimeCommand", "name": "track", "kind": kind, "id": id]
             if let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) {
@@ -998,7 +1086,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             playback.videoWidth = (state["videoWidth"] as? Double) ?? 0
             playback.videoHeight = (state["videoHeight"] as? Double) ?? 0
             playback.engine = "WebKit"
-            updateWebPictureInPicture(state)
+            updateWebPictureInPicture(state, frame: message.frameInfo)
             if (state["ready"] as? Bool) == true || playback.currentTime > 0 && playback.duration > 0 {
                 let wasLoading = playback.loading
                 playback.loading = false; playback.verification = false; playback.error = nil
@@ -1355,6 +1443,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             var pc=pipContext(v);syncPiP(v,pc);
             send('mediaState',{pipSessionID:pc.sessionID,pipRequestID:pc.requestID,pipError:pc.error,pipSupported:supportsPiP(v),pipActive:pipActive(v),pipPending:pipPending(v),time:isFinite(v.currentTime)?v.currentTime:0,duration:isFinite(v.duration)?v.duration:0,paused:v.paused,buffering:!v.paused&&v.readyState<3&&!advancing,ready:v.readyState>=2||(v.currentTime>0&&v.videoWidth>0),ended:v.ended,videoWidth:v.videoWidth||0,videoHeight:v.videoHeight||0,tracks:trackState(v)});
           }
+          window.__anpinimeRequestPiP=function(command){requestPiP(activeVideo,command);state();};
           window.addEventListener('message',function(event){
             var c=event.data;if(!c||c.type!=='AnPinimeCommand')return;
             // The player container can be ready before its video is created.

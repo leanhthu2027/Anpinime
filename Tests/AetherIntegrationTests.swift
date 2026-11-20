@@ -31,7 +31,7 @@ import Foundation
             defaults.set(source.rawValue, forKey: MovieSourceMigration.selectionKey)
             check(!MovieSourceMigration.migrate(defaults: defaults) && defaults.string(forKey: MovieSourceMigration.selectionKey) == source.rawValue, "unchanged source selection " + source.rawValue)
         }
-        check(ContentSource.allCases.map(\.rawValue) == ["anime", "film4k", "aether", "kkphim"], "production source enum exposes exactly the four intended sources")
+        check(ContentSource.allCases.map(\.rawValue) == ["anime", "miruro", "film4k", "aether", "kkphim"], "Miruro is available alongside the existing sources")
         check(ContentSource.aether.title == "Anpinime VIP" && ContentSource.film4k.title == "Anpinime Free" && ContentSource.kkphim.title == "Anpinime dự phòng", "source labels are unambiguous")
         verifyPiPSessions()
         print("\(checks) Aether migration/bridge checks passed")

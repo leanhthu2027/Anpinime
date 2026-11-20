@@ -19,10 +19,11 @@ final class AnimeService: ObservableObject {
     private(set) lazy var website = WebsiteSession()
 
     @Published private(set) var movieCategories: [AnimeCategory] = []
-    var categories: [AnimeCategory] { source.isMovie ? movieCategories : animeCategories }
+    var categories: [AnimeCategory] { source == .anime ? animeCategories : movieCategories }
     var contentName: String { source.isMovie ? "phim" : "anime" }
     private let film4k = MovieProvider(source: .film4k)
     private let aether = AetherProvider()
+    private let miruro = MiruroProvider()
     private let kkphim = MovieProvider(source: .kkphim)
     private struct HomeSnapshot {
         let sections: [AnimeSection]
@@ -82,10 +83,10 @@ final class AnimeService: ObservableObject {
         source = value
         let cached = homeCache[value]
         homeSections = cached?.sections ?? []
-        movieCategories = cached?.categories ?? (value.isMovie ? provider(value).categories : [])
+        movieCategories = cached?.categories ?? (value == .anime ? [] : provider(value).categories)
         homeLoading = cached == nil
         status = "Đang kết nối \(value.subtitle)…"
-        if value.isMovie { baseURL = provider(value).baseURL }
+        if value != .anime { baseURL = provider(value).baseURL }
         else { baseURL = AnimeSiteConfiguration.selectedURL() ?? URL(string: "https://animevietsub.vip")! }
         if let cached {
             baseURL = cached.baseURL
@@ -121,6 +122,7 @@ final class AnimeService: ObservableObject {
         case .film4k: return film4k
         case .kkphim: return kkphim
         case .aether: return aether
+        case .miruro: return miruro
         case .anime: return film4k // Anime HTML never routes through a movie provider.
         }
     }
@@ -158,7 +160,7 @@ final class AnimeService: ObservableObject {
             homeCache[source] = nil
             htmlCache.removeAll()
             detailCache.removeAll()
-            if source.isMovie { provider(source).invalidate() }
+            if source != .anime { provider(source).invalidate() }
         } else if let cached = homeCache[source], cached.complete, Date().timeIntervalSince(cached.date) < 300 {
             return
         }
@@ -189,7 +191,7 @@ final class AnimeService: ObservableObject {
             }
         }
 
-        if selectedSource.isMovie {
+        if selectedSource != .anime {
             status = "Đang tải \(selectedSource.title)…"
             do {
                 let provider = provider(selectedSource)
@@ -297,7 +299,7 @@ final class AnimeService: ObservableObject {
     }
 
     func list(path: String, page: Int = 1) async throws -> [Anime] {
-        if source.isMovie { return try await provider(source).list(path: path, page: page) }
+        if source != .anime { return try await provider(source).list(path: path, page: page) }
         let url = try makeURL(path)
         let html = try await fetchHTML(url: url)
         try Task.checkCancellation()
@@ -311,7 +313,7 @@ final class AnimeService: ObservableObject {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return [] }
         let selected = requestedSource ?? source
-        if selected.isMovie { return try await provider(selected).search(clean) }
+        if selected != .anime { return try await provider(selected).search(clean) }
         let currentBase = await resolver.resolve()
         guard let encoded = clean.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
               let url = URL(string: "/tim-kiem/" + encoded + "/", relativeTo: currentBase)?.absoluteURL else {
@@ -328,7 +330,7 @@ final class AnimeService: ObservableObject {
     }
 
     func detailMetadata(for anime: Anime, forceRefresh: Bool = false) async throws -> AnimeDetail {
-        if anime.source.isMovie { return try await provider(anime.source).detail(anime) }
+        if anime.source != .anime { return try await provider(anime.source).detail(anime) }
         if !forceRefresh, let cached = cachedDetail(for: anime.id) {
             return cached
         }
@@ -354,7 +356,7 @@ final class AnimeService: ObservableObject {
     }
 
     func loadEpisodes(for anime: Anime, initialDetail: AnimeDetail, forceRefresh: Bool = false) async throws -> [Episode] {
-        if anime.source.isMovie { return initialDetail.episodes }
+        if anime.source != .anime { return initialDetail.episodes }
         if !forceRefresh, let cached = cachedDetail(for: anime.id), !cached.episodes.isEmpty {
             return cached.episodes
         }
@@ -439,7 +441,7 @@ final class AnimeService: ObservableObject {
     }
 
     func detail(for anime: Anime) async throws -> AnimeDetail {
-        if anime.source.isMovie { return try await provider(anime.source).detail(anime) }
+        if anime.source != .anime { return try await provider(anime.source).detail(anime) }
         if let (date, detail) = detailCache[anime.id], Date().timeIntervalSince(date) < 180, !detail.episodes.isEmpty {
             return detail
         }
