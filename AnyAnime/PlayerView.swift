@@ -211,7 +211,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         webPiPTimeout?.invalidate(); webPiPTimeout = nil
         if let frame = webPiPFrame, let sessionID = webPiPSessionID {
             fallbackWebView?.callAsyncJavaScript("window.__anpinimeArmHomePiP?.(sessionID, null, false)",
-                arguments: ["sessionID": sessionID], in: frame, contentWorld: .page, completionHandler: nil)
+                arguments: ["sessionID": sessionID], in: frame, in: .page, completionHandler: nil)
         }
         webPiPSessionID = nil; webHomeRequestID = nil; webPiPRequestID = nil; webPiPFrame = nil
         guard publishState else { return }
@@ -253,7 +253,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                                       "requestID": requestID, "sessionID": sessionID]
         beginWebPiPRequest(requestID, sessionID: sessionID)
         webView.callAsyncJavaScript("window.__anpinimeRequestPiP && window.__anpinimeRequestPiP(command)",
-                                    arguments: ["command": payload], in: webPiPFrame, contentWorld: .page) { [weak self] result in
+                                    arguments: ["command": payload], in: webPiPFrame, in: .page) { [weak self] result in
             if case .failure = result, let self {
                 self.finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
                     error: self.webPictureInPictureError("evaluation"))
@@ -283,7 +283,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         webHomeRequestID = id
         let enabled = UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true
         fallbackWebView?.callAsyncJavaScript("return window.__anpinimeArmHomePiP(sessionID, requestID, enabled)",
-            arguments: ["sessionID": sessionID, "requestID": id, "enabled": enabled], in: frame, contentWorld: .page) { [weak self] result in
+            arguments: ["sessionID": sessionID, "requestID": id, "enabled": enabled], in: frame, in: .page) { [weak self] result in
             guard let self, self.webHomeRequestID == id else { return }
             if case .success(let armed) = result, armed as? Bool == true { return }
             self.webHomeRequestID = nil
