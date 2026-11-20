@@ -560,3 +560,28 @@ function animeResumePrompt(f, renamed = false) {
   movie.dom.window.close();
   console.log('PASS: anime episode-scoped start, original late resume action, storage isolation, pause/seek and PiP/native recovery preservation');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async () => {
+  const text = '#EXTM3U\n#EXTINF:60,\nhttps://cdn.example/part.ts\n';
+  const f = fixture('<div id="player"><video src="blob:https://animevietsub.example/manifest"></video></div>', w => {
+    w.__anpinimeAnimePlayback = {episodeID:'anime:blob', initialPosition:0};
+    w.fetch = async () => ({blob:async () => ({size:text.length, text:async () => text})});
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const report = f.messages.find(m => m.name === 'playlistFound');
+  assert(report && report.value.playlist === text, 'Only a confirmed HLS text blob is delivered to native');
+  assert.equal(report.value.sessionID, f.messages.filter(m => m.name === 'mediaState').at(-1).value.pipSessionID);
+  f.video.currentTime = 42;
+  const paused = f.w.__anpinimePauseForHandoff();
+  assert.equal(paused.time, 42);
+  assert.equal(f.video.paused, true, 'Handoff pauses the same video before native audio starts');
+  f.dom.window.close();
+  const binary = fixture('<div id="player"><video src="blob:https://animevietsub.example/mse"></video></div>', w => {
+    w.__anpinimeAnimePlayback = {episodeID:'anime:mse', initialPosition:0};
+    w.fetch = async () => ({blob:async () => ({size:8, text:async () => 'binary'})});
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert(!binary.messages.some(m => m.name === 'playlistFound'), 'MSE bytes are never identified as a playlist');
+  binary.dom.window.close();
+  console.log('PASS: confirmed HLS blob collection, MSE rejection and same-video handoff');
+})().catch(error => { console.error(error); process.exitCode = 1; });

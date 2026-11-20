@@ -37,8 +37,7 @@ final class AnimeService: ObservableObject {
     private var htmlCache: [URL: (Date, String, URL)] = [:]
     private var htmlRequests: [URL: (UUID, Task<String, Error>)] = [:]
     private var detailCache: [String: (Date, AnimeDetail)] = [:]
-    private var scheduleCache: [DayOfWeek: [AnimeScheduleItem]] = [:]
-    private var scheduleCacheDate = Date.distantPast
+    private var scheduleCaches: [ContentSource: (date: Date, rows: [DayOfWeek: [AnimeScheduleItem]])] = [:]
     private var homeRequestID = UUID()
     private var homeTask: Task<Void, Never>?
 
@@ -112,7 +111,7 @@ final class AnimeService: ObservableObject {
         homeSections = []
         for (_, task) in htmlRequests.values { task.cancel() }
         htmlRequests.removeAll(); htmlCache.removeAll(); detailCache.removeAll()
-        scheduleCache.removeAll(); scheduleCacheDate = .distantPast
+        scheduleCaches[.anime] = nil
         imageGeneration += 1
         await loadHome(forceDomainRefresh: true)
     }
@@ -470,24 +469,31 @@ final class AnimeService: ObservableObject {
         return detail
     }
 
-    var scheduleUpdatedAt: Date? { scheduleCache.isEmpty ? nil : scheduleCacheDate }
-    func restoreSchedule() -> (Date, [DayOfWeek: [AnimeScheduleItem]])? { AnimeScheduleStore.load() }
+    var scheduleUpdatedAt: Date? { scheduleCaches[source]?.date }
+    func restoreSchedule() -> (Date, [DayOfWeek: [AnimeScheduleItem]])? { AnimeScheduleStore.load(source: source) }
 
-    func schedule(forceRefresh: Bool = false) async throws -> [DayOfWeek: [AnimeScheduleItem]] {
-        if !forceRefresh, !scheduleCache.isEmpty, Date().timeIntervalSince(scheduleCacheDate) < 600 {
-            return scheduleCache
+    func schedule(forceRefresh: Bool = false, weekOffset: Int = 0) async throws -> [DayOfWeek: [AnimeScheduleItem]] {
+        let selected = source
+        if weekOffset == 0, !forceRefresh, let cached = scheduleCaches[selected],
+           Date().timeIntervalSince(cached.date) < 600 { return cached.rows }
+        let parsed: [DayOfWeek: [AnimeScheduleItem]]
+        if selected == .miruro {
+            parsed = try await miruro.schedule(weekOffset: weekOffset)
+        } else {
+            let resolved = await resolver.resolve(force: forceRefresh)
+            let scheduleURL = resolved.appendingPathComponent("lich-chieu-phim.html")
+            if forceRefresh { htmlCache[scheduleURL] = nil }
+            let html = try await fetchHTML(url: scheduleURL)
+            parsed = HTMLParser.schedule(from: html, baseURL: resolved)
         }
-        let resolved = await resolver.resolve(force: forceRefresh)
-        let scheduleURL = resolved.appendingPathComponent("lich-chieu-phim.html")
-        if forceRefresh { htmlCache[scheduleURL] = nil }
-        let html = try await fetchHTML(url: scheduleURL)
-        let parsed = HTMLParser.schedule(from: html, baseURL: resolved)
-        guard !parsed.values.allSatisfy({ $0.isEmpty }) else {
-            throw AnimeServiceError.emptyData
+        try Task.checkCancellation()
+        guard selected == source else { throw CancellationError() }
+        guard !parsed.values.allSatisfy({ $0.isEmpty }) || weekOffset != 0 else { throw AnimeServiceError.emptyData }
+        if weekOffset == 0 {
+            let now = Date()
+            scheduleCaches[selected] = (now, parsed)
+            AnimeScheduleStore.save(parsed, at: now, source: selected)
         }
-        scheduleCache = parsed
-        scheduleCacheDate = Date()
-        AnimeScheduleStore.save(parsed, at: scheduleCacheDate)
         return parsed
     }
 

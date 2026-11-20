@@ -165,7 +165,7 @@ struct RootView: View {
                 .tabItem { Label("Thể loại", systemImage: "square.grid.2x2.fill") }
                 .tag(2)
 
-            if service.source == .anime {
+            if service.source == .anime || service.source == .miruro {
                 NavigationView { AnimeScheduleView() }
                     .navigationViewStyle(.stack)
                     .tabItem { Label("Lịch chiếu", systemImage: "calendar") }

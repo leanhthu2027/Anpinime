@@ -269,3 +269,15 @@ for ext in ["ts", "m4s", "mp4", "aac", "vtt", "m3u8"] {
 }
 check(Phim4KRelayNaming.suffix(for: URL(string: "https://media.example/api/content/stream/hls?id=hidden")!) == "m3u8", "Extensionless source-2 HLS remains a playlist")
 check(Phim4KRelayNaming.suffix(for: URL(string: "https://media.example/unsafe.html")!) == "bin", "Unknown media suffixes remain opaque")
+
+check(FilmMediaTransform.validAbsolutePlaylist("#EXTM3U\n#EXTINF:2,\nhttps://cdn.example/a.ts\n"), "Blob text can use absolute HLS segments")
+check(!FilmMediaTransform.validAbsolutePlaylist("#EXTM3U\n#EXTINF:2,\na.ts\n"), "A blob without an upstream base cannot resolve relative HLS segments")
+check(!FilmMediaTransform.validAbsolutePlaylist("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"skd://key\"\nhttps://cdn.example/a.ts"), "Unsupported protected HLS keys are not sent to the relay")
+check(FilmMediaTransform.firstAbsolutePlaylistURL("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://cdn.example/key\"\nhttps://cdn.example/a.ts")?.host == "cdn.example", "Inline HLS exposes its first resource for scoped headers")
+
+let miruroScheduleAnime = Anime(title: "Miruro", url: URL(string: "https://miruro.cx/watch/abc/fixture")!, imageURL: nil, episodeText: "2", quality: "", score: "", source: .miruro)
+let miruroScheduleRow = AnimeScheduleItem(id: "miruro-entry", anime: miruroScheduleAnime, airTime: "06:00", pubTimeFormat: "", expectedEpisode: "2", statusText: "Sắp chiếu", dayOfWeek: .tuesday, track: "sub")
+AnimeScheduleStore.save([.tuesday: [miruroScheduleRow]], at: cachedAt, source: .miruro, defaults: scheduleDefaults)
+let restoredMiruro = AnimeScheduleStore.load(source: .miruro, defaults: scheduleDefaults)
+check(restoredMiruro?.1[.tuesday]?.first?.anime.source == .miruro && restoredMiruro?.1[.tuesday]?.first?.track == "sub", "Miruro schedule restores source and track")
+check(AnimeScheduleStore.load(defaults: scheduleDefaults)?.1[.wednesday]?.first?.anime.source == .anime, "Miruro cache does not replace the AnimeVietsub schedule")

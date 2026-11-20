@@ -48,6 +48,44 @@ enum FilmMediaTransform {
         return data
     }
 
+    /// A blob may be an MSE byte stream. Accept only an HLS text playlist
+    /// with absolute network resources because its original base is unknown.
+    static func validAbsolutePlaylist(_ text: String) -> Bool {
+        guard text.utf8.count <= 1_048_576,
+              text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#EXTM3U") else { return false }
+        let expression = try! NSRegularExpression(pattern: #"URI="([^"]+)""#)
+        var resources = 0
+        func valid(_ value: String) -> Bool {
+            guard let url = URL(string: value), ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+                  let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return false }
+            return true
+        }
+        for line in text.components(separatedBy: .newlines) {
+            let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty && !clean.hasPrefix("#") {
+                guard valid(clean) else { return false }
+                resources += 1
+            }
+            for match in expression.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
+                guard let range = Range(match.range(at: 1), in: line), valid(String(line[range])) else { return false }
+                resources += 1
+            }
+        }
+        return resources > 0
+    }
+
+    static func firstAbsolutePlaylistURL(_ text: String) -> URL? {
+        guard validAbsolutePlaylist(text) else { return nil }
+        let expression = try! NSRegularExpression(pattern: #"URI="([^"]+)""#)
+        for line in text.components(separatedBy: .newlines) {
+            let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty && !clean.hasPrefix("#"), let url = URL(string: clean) { return url }
+            if let match = expression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+               let range = Range(match.range(at: 1), in: line), let url = URL(string: String(line[range])) { return url }
+        }
+        return nil
+    }
+
     static func playlist(_ text: String, base: URL, map: (URL) -> URL) -> String {
         let expression = try! NSRegularExpression(pattern: #"URI="([^"]+)""#)
         return text.components(separatedBy: .newlines).map { line in

@@ -2,11 +2,19 @@ import Foundation
 import Network
 
 private final class FilmRedirectPolicy: NSObject, URLSessionTaskDelegate {
+    private let restrictHeaders: Bool
+    init(restrictHeaders: Bool) { self.restrictHeaders = restrictHeaders }
+
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
         var request = request
-        if response.url?.host != request.url?.host { request.setValue(nil, forHTTPHeaderField: "X-F4K-PT") }
+        if response.url?.host != request.url?.host {
+            request.setValue(nil, forHTTPHeaderField: "X-F4K-PT")
+            if restrictHeaders {
+                for header in ["Cookie", "Authorization", "Referer", "Origin"] { request.setValue(nil, forHTTPHeaderField: header) }
+            }
+        }
         completionHandler(request)
     }
 }
@@ -20,6 +28,9 @@ final class FilmMediaRelay {
     private let headers: [String: String]
     private let preserveMediaExtensions: Bool
     private let transportStreamEnvelope: Bool
+    private let scopedHeaderHost: String?
+    private var inlineRoot: (url: URL, text: String)?
+    private var playlistRoot: URL?
     private let secret = UUID().uuidString
     private let queue = DispatchQueue(label: "AnPinime.FilmMediaRelay")
     private let session: URLSession
@@ -32,10 +43,11 @@ final class FilmMediaRelay {
     private var requests: [UUID: Task<Void, Never>] = [:]
     private let mediaCache = NSCache<NSURL, NSData>()
 
-    init(origin: URL, headers: [String: String], preserveMediaExtensions: Bool = false, useSharedCookies: Bool = true, transportStreamEnvelope: Bool = false) {
+    init(origin: URL, headers: [String: String], preserveMediaExtensions: Bool = false, useSharedCookies: Bool = true, transportStreamEnvelope: Bool = false, scopedHeaderHost: String? = nil) {
         self.origin = origin; self.headers = headers
         self.preserveMediaExtensions = preserveMediaExtensions
         self.transportStreamEnvelope = transportStreamEnvelope
+        self.scopedHeaderHost = scopedHeaderHost?.lowercased()
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = useSharedCookies ? .shared : nil
         config.httpShouldSetCookies = useSharedCookies
@@ -43,12 +55,17 @@ final class FilmMediaRelay {
         config.timeoutIntervalForResource = 60
         config.httpMaximumConnectionsPerHost = 12
         config.waitsForConnectivity = false
-        session = URLSession(configuration: config, delegate: FilmRedirectPolicy(), delegateQueue: nil)
+        session = URLSession(configuration: config, delegate: FilmRedirectPolicy(restrictHeaders: scopedHeaderHost != nil), delegateQueue: nil)
         mediaCache.totalCostLimit = 96 * 1024 * 1024
         mediaCache.countLimit = 24
     }
 
-    func start(_ url: URL) async throws -> URL {
+    func start(_ url: URL, forcePlaylist: Bool = false, inlinePlaylist: String? = nil) async throws -> URL {
+        if forcePlaylist || inlinePlaylist != nil { playlistRoot = url }
+        if let inlinePlaylist {
+            guard FilmMediaTransform.validAbsolutePlaylist(inlinePlaylist) else { throw AnimeServiceError.invalidResponse }
+            inlineRoot = (url, inlinePlaylist)
+        }
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
@@ -87,12 +104,12 @@ final class FilmMediaRelay {
         connections.removeAll()
         session.invalidateAndCancel()
         mediaCache.removeAllObjects()
-        urls.removeAll(); identifiers.removeAll()
+        urls.removeAll(); identifiers.removeAll(); inlineRoot = nil; playlistRoot = nil
     }
 
     private func localURL(_ url: URL) -> URL {
         if let key = identifiers[url] { return endpoint!.appendingPathComponent(key) }
-        let suffix = preserveMediaExtensions ? Phim4KRelayNaming.suffix(for: url, transportStreamEnvelope: transportStreamEnvelope)
+        let suffix = playlistRoot == url ? "m3u8" : preserveMediaExtensions ? Phim4KRelayNaming.suffix(for: url, transportStreamEnvelope: transportStreamEnvelope)
             : (url.pathExtension == "m3u8" || url.path.hasSuffix("/stream/hls") ? "m3u8" : "bin")
         let key = "\(secret)/\(UUID().uuidString).\(suffix)"
         identifiers[url] = key; urls[key] = url
@@ -133,9 +150,23 @@ final class FilmMediaRelay {
               let url = urls[String(parts[1].dropFirst())] else {
             send(id, status: 404, body: Data()); return
         }
+        if let root = inlineRoot, root.url == url {
+            let body = Data(FilmMediaTransform.playlist(root.text, base: root.url, map: localURL).utf8)
+            let rangeHeader = lines.first { $0.lowercased().hasPrefix("range:") }?.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            if let rangeHeader {
+                guard let range = FilmMediaTransform.byteRange(rangeHeader, count: body.count) else {
+                    send(id, status: 416, body: Data(), extra: "Content-Range: bytes */\(body.count)\r\n"); return
+                }
+                send(id, status: 206, body: body.subdata(in: range), type: "application/vnd.apple.mpegurl", head: parts[0] == "HEAD",
+                     extra: "Content-Range: bytes \(range.lowerBound)-\(range.upperBound - 1)/\(body.count)\r\n")
+            } else { send(id, status: 200, body: body, type: "application/vnd.apple.mpegurl", head: parts[0] == "HEAD") }
+            return
+        }
         do {
             var request = URLRequest(url: url)
             for (name, value) in headers where name != "X-StreamC-Hash" && (name != "X-F4K-PT" || url.host == origin.host) {
+                if let scopedHeaderHost, url.host?.lowercased() != scopedHeaderHost,
+                   ["cookie", "authorization", "referer", "origin"].contains(name.lowercased()) { continue }
                 request.setValue(value, forHTTPHeaderField: name)
             }
             // Range is applied AFTER removing the envelope, never to wrapped upstream bytes.

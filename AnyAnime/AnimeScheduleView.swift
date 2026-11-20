@@ -9,6 +9,9 @@ struct AnimeScheduleView: View {
     @State private var selectedAnime: Anime? = nil
     @State private var lastUpdated: Date?
     @State private var showingCached = false
+    @State private var weekOffset = 0
+    @State private var track = "all"
+    @State private var loadTask: Task<Void, Never>?
 
     private let days: [DayOfWeek] = [
         .monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday
@@ -16,13 +19,26 @@ struct AnimeScheduleView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Day selector pill bar
+            if service.source == .miruro {
+                HStack {
+                    Button { changeWeek(-1) } label: { Image(systemName: "chevron.left") }
+                    Spacer()
+                    Text(weekOffset == 0 ? "Tuần này" : "Tuần \(weekOffset > 0 ? "+" : "")\(weekOffset)")
+                    Spacer()
+                    Button { changeWeek(1) } label: { Image(systemName: "chevron.right") }
+                }.padding(.horizontal, 20).padding(.vertical, 8)
+                Picker("Ngôn ngữ", selection: $track) {
+                    Text("Tất cả").tag("all")
+                    Text("Phụ đề").tag("sub")
+                    Text("Lồng tiếng").tag("dub")
+                }.pickerStyle(.segmented).padding(.horizontal)
+            }
             daySelectorBar
                 .padding(.vertical, 8)
                 .background(Color(white: 0.08))
 
             Divider()
-            Text("Giờ theo website nguồn").font(.caption2).foregroundColor(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
+            Text(service.source == .miruro ? "Giờ Việt Nam" : "Giờ theo website nguồn").font(.caption2).foregroundColor(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
             if showingCached, let lastUpdated {
                 Text("Lịch đã lưu · cập nhật " + lastUpdated.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption).foregroundColor(.secondary).padding(.horizontal, 8)
@@ -37,7 +53,7 @@ struct AnimeScheduleView: View {
                     VStack(spacing: 12) {
                         ProgressView()
                             .scaleEffect(1.2)
-                        Text("Đang tải lịch chiếu AnimeVietsub…")
+                        Text("Đang tải lịch chiếu \(service.source.title)…")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -52,7 +68,7 @@ struct AnimeScheduleView: View {
                         Task { await load(forceRefresh: true) }
                     }
                 } else {
-                    let items = scheduleData[selectedDay] ?? []
+                    let items = (scheduleData[selectedDay] ?? []).filter { track == "all" || $0.track == track }
                     if items.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "calendar.badge.exclamationmark")
@@ -104,6 +120,7 @@ struct AnimeScheduleView: View {
         .refreshable {
             await load(forceRefresh: true)
         }
+        .onDisappear { loadTask?.cancel() }
     }
 
     // MARK: - Day Selector Bar
@@ -113,7 +130,7 @@ struct AnimeScheduleView: View {
                 ForEach(days) { day in
                     let isSelected = day == selectedDay
                     let isToday = day == DayOfWeek.current
-                    let count = scheduleData[day]?.count ?? 0
+                    let count = (scheduleData[day] ?? []).filter { track == "all" || $0.track == track }.count
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
@@ -264,20 +281,31 @@ struct AnimeScheduleView: View {
         .buttonStyle(.plain)
     }
 
+    private func changeWeek(_ delta: Int) {
+        weekOffset = max(-52, min(52, weekOffset + delta))
+        scheduleData = [:]
+        selectedDay = weekOffset == 0 ? .current : .monday
+        loadTask?.cancel()
+        loadTask = Task { await load(forceRefresh: true) }
+    }
+
     // MARK: - Data Loading
     private func load(forceRefresh: Bool) async {
-        if scheduleData.isEmpty, let cached = service.restoreSchedule() {
+        if weekOffset == 0, scheduleData.isEmpty, let cached = service.restoreSchedule() {
             lastUpdated = cached.0; scheduleData = cached.1; showingCached = true
         }
         if scheduleData.isEmpty || forceRefresh { loading = true }
         errorMessage = nil
+        let requestedWeek = weekOffset
         do {
-            let data = try await service.schedule(forceRefresh: forceRefresh)
+            let data = try await service.schedule(forceRefresh: forceRefresh, weekOffset: requestedWeek)
+            guard !Task.isCancelled, requestedWeek == weekOffset else { return }
             scheduleData = data
             lastUpdated = service.scheduleUpdatedAt
             showingCached = false
             loading = false
         } catch {
+            guard !Task.isCancelled, requestedWeek == weekOffset else { return }
             errorMessage = error.localizedDescription
             loading = false
             service.register(error)

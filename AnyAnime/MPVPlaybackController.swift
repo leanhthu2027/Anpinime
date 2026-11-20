@@ -16,6 +16,7 @@ final class MPVPlaybackController: UIViewController {
     private let surface = MPVSurface()
     private var pictureInPicture: MPVPictureInPicture?
     private var preloading: Bool
+    private var handoffMuted: Bool
     private let resizesEmbeddedSurface: Bool
     private var rendererSize = CGSize.zero
     private var resizeTask: Task<Void, Never>?
@@ -72,11 +73,12 @@ final class MPVPlaybackController: UIViewController {
     var onPictureInPictureEnded: (() -> Void)?
     private let piPDiagnosticSessionID = UUID().uuidString
 
-    init(url: URL, headers: [String: String], playback: PlaybackState, preloading: Bool = false, resizesEmbeddedSurface: Bool = false, initialViewport: CGSize? = nil, startAt: Double = 0) {
+    init(url: URL, headers: [String: String], playback: PlaybackState, preloading: Bool = false, resizesEmbeddedSurface: Bool = false, initialViewport: CGSize? = nil, startAt: Double = 0, handoffMuted: Bool = false) {
         self.initialViewport = initialViewport
         self.startAt = startAt
         self.resizesEmbeddedSurface = resizesEmbeddedSurface
         self.preloading = preloading
+        self.handoffMuted = handoffMuted
         self.url = url; self.headers = headers; self.playback = playback; self.userPaused = playback.userPaused
         super.init(nibName: nil, bundle: nil)
     }
@@ -132,7 +134,7 @@ final class MPVPlaybackController: UIViewController {
         playback.pictureInPictureSupported = AVPictureInPictureController.isPictureInPictureSupported()
         playback.engine = "mpv"
         playback.supportsAdvancedSubtitles = true
-        set("speed", String(playback.rate)); set("volume", preloading ? "0" : String(playback.volume * 100))
+        set("speed", String(playback.rate)); set("volume", preloading || handoffMuted ? "0" : String(playback.volume * 100))
         applyStyle()
         command(["loadfile", url.absoluteString, "replace"])
         startedAt = Date()
@@ -214,8 +216,13 @@ final class MPVPlaybackController: UIViewController {
         set("volume", String(playback.volume * 100))
     }
 
+    func finishHandoff() {
+        handoffMuted = false
+        set("volume", String(playback.volume * 100))
+    }
+
     private var automaticPiPEnabled: Bool {
-        !preloading && automaticInlineFailures < 2 &&
+        !preloading && !handoffMuted && automaticInlineFailures < 2 &&
             ProcessInfo.processInfo.systemUptime >= automaticInlineRetryAt &&
             (UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true)
     }

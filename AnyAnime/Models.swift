@@ -56,6 +56,7 @@ struct NativeStream {
     let headers: [String: String]
     let captions: [RemoteCaption]
     var label: String = ""
+    var format: String = ""
 }
 
 struct ResolvedPlayback {
@@ -66,6 +67,7 @@ struct ResolvedPlayback {
     var nativeFallbacks: [NativeStream] = []
     var captions: [RemoteCaption] = []
     var label: String = ""
+    var nativeFormat: String = ""
 }
 
 struct PlaybackChoice: Identifiable, Hashable {
@@ -219,4 +221,5 @@ struct AnimeScheduleItem: Identifiable, Hashable {
     let expectedEpisode: String
     let statusText: String
     let dayOfWeek: DayOfWeek
+    var track: String = ""
 }

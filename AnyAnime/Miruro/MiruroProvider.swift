@@ -62,9 +62,10 @@ struct MiruroPage {
 
     private static func intIndex(_ value: Any?) -> Int? {
         guard let value else { return nil }
-        if value is Bool { return nil }
         #if canImport(CoreFoundation)
         if CFGetTypeID(value as AnyObject) == CFBooleanGetTypeID() { return nil }
+        #else
+        if value is Bool { return nil }
         #endif
         return value as? Int
     }
@@ -93,6 +94,7 @@ struct MiruroPage {
                 if let chunk = chunks[rawRef] {
                     return decode(0, in: chunk, depth: depth + 1, budget: &budget)
                 }
+                return nil
             }
             return array.compactMap { entry -> Any? in
                 guard let next = Self.intIndex(entry) else { return nil }
@@ -438,49 +440,10 @@ final class MiruroProvider: MovieSourceProviding {
             return cached.sections
         }
 
-        if usesExternalSession {
-            let page = try MiruroPage(await request(activeBaseURL.appendingPathComponent("__data.json")))
-            let sections = parseHomeSections(from: page)
-            guard !sections.isEmpty else { throw AnimeServiceError.emptyData }
-            onInitial(sections)
-            return sections
-        }
-
-        let homePath = "/__data.json"
-        let trendingPath = "/api/search/browse?sort=TRENDING_DESC&type=ANIME&limit=24&page=1&offset=0"
-        let popularPath = "/api/search/browse?sort=POPULARITY_DESC&type=ANIME&limit=24&page=1&offset=0"
-        let moviePath = "/api/search/browse?format=MOVIE&sort=POPULARITY_DESC&type=ANIME&limit=24&page=1&offset=0"
-
-        let batch = try await requestBatch(paths: [homePath, trendingPath, popularPath, moviePath])
-
-        var sections: [AnimeSection] = []
-        if let homeData = batch[homePath], let page = try? MiruroPage(homeData) {
-            sections = parseHomeSections(from: page)
-        }
-
-        func parseBrowse(_ data: Data?) -> [Anime] {
-            guard let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? Object,
-                  let rows = json["data"] as? [Object] else { return [] }
-            return catalogItems(rows)
-        }
-
-        let trending = parseBrowse(batch[trendingPath])
-        let popular = parseBrowse(batch[popularPath])
-        let movies = parseBrowse(batch[moviePath])
-
-        if !trending.isEmpty {
-            sections.append(.init(title: "Thịnh hành", items: trending, categoryPath: "sort=TRENDING_DESC"))
-        }
-        if !popular.isEmpty {
-            sections.append(.init(title: "Phổ biến nhất", items: popular, categoryPath: "sort=POPULARITY_DESC"))
-        }
-        if !movies.isEmpty {
-            sections.append(.init(title: "Phim lẻ (Movie)", items: movies, categoryPath: "format=MOVIE"))
-        }
-
+        let page = try MiruroPage(await request(activeBaseURL.appendingPathComponent("__data.json")))
+        let sections = parseHomeSections(from: page)
         guard !sections.isEmpty else { throw AnimeServiceError.emptyData }
-        homeCache = (Date(), sections)
+        if !usesExternalSession { homeCache = (Date(), sections) }
         onInitial(sections)
         return sections
     }
@@ -516,8 +479,10 @@ final class MiruroProvider: MovieSourceProviding {
 
     private func browse(_ filters: [URLQueryItem], page: Int) async throws -> [Anime] {
         var route = URLComponents(url: activeBaseURL.appendingPathComponent("api/search/browse"), resolvingAgainstBaseURL: false)!
-        route.queryItems = filters + [.init(name: "type", value: "ANIME"), .init(name: "limit", value: "24"),
-                                      .init(name: "page", value: String(page)), .init(name: "offset", value: String((page - 1) * 24))]
+        var query = filters + [.init(name: "type", value: "ANIME"), .init(name: "limit", value: "24"),
+                               .init(name: "page", value: String(page))]
+        if page > 1 { query.append(.init(name: "offset", value: String((page - 1) * 24))) }
+        route.queryItems = query
         guard let url = route.url, let json = try JSONSerialization.jsonObject(with: await request(url)) as? Object,
               let items = json["data"] as? [Object] else { throw AnimeServiceError.invalidResponse }
         return catalogItems(items)
@@ -530,8 +495,17 @@ final class MiruroProvider: MovieSourceProviding {
             return cached.detail
         }
         let rebasedURL = rebaseToActiveHost(anime.url)
+        async let info = try? infoPage(rebasedURL)
         let page = try await watchPage(rebasedURL, number: "1")
         var detail = try detail(from: page, anime: anime)
+        if let infoPage = await info, let metadata = infoPage.field("detail") as? Object {
+            detail = AnimeDetail(title: title(metadata) ?? detail.title,
+                                 posterURL: Self.remoteURL(metadata["cover_url"]) ?? detail.posterURL,
+                                 bannerURL: Self.remoteURL(metadata["background_url"] ?? metadata["banner_url"]) ?? detail.bannerURL,
+                                 summary: (metadata["description"] as? String ?? detail.summary).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
+                                 info: [metadata["format"] as? String, (metadata["season_year"] as? Int).map(String.init)].compactMap { $0 }.joined(separator: " · "),
+                                 episodes: detail.episodes)
+        }
 
         // Fallback to /api/episodes if watchPage chunk omitted episodes
         if !usesExternalSession, detail.episodes.isEmpty {
@@ -630,7 +604,7 @@ final class MiruroProvider: MovieSourceProviding {
 
         guard let first = options.first else { throw AnimeServiceError.emptyData }
         return ResolvedPlayback(url: first.url, headers: first.headers, webURL: nil, isWeb: false,
-                                nativeFallbacks: Array(options.dropFirst()), captions: first.captions, label: first.label)
+                                nativeFallbacks: Array(options.dropFirst()), captions: first.captions, label: first.label, nativeFormat: first.format)
     }
 
     func streams(from page: MiruroPage, episode: Double) -> [NativeStream] {
@@ -707,13 +681,14 @@ final class MiruroProvider: MovieSourceProviding {
                             guard ["hls", "mp4"].contains(stream["format"] as? String ?? ""),
                                   let url = Self.remoteURL(stream["url"]), seen.insert(url).inserted else { continue }
                             let finalHeaders = Self.cdnHeaders(for: url, existing: baseHeaders)
-                            options.append(NativeStream(url: url, headers: finalHeaders, captions: ownCaptions, label: label))
+                            options.append(NativeStream(url: url, headers: finalHeaders, captions: ownCaptions, label: label,
+                                                        format: stream["format"] as? String ?? ""))
                         }
                     }
                 }
             }
         }
-        return Array(options.prefix(12))
+        return options
     }
 
     private static func extractSafeHeaders(_ raw: [String: String]) -> [String: String] {
@@ -768,11 +743,12 @@ final class MiruroProvider: MovieSourceProviding {
         }()
         defer { probeSession.invalidateAndCancel() }
 
+        let userAgent = Self.safariUserAgent
         let winnerIndex: Int? = await withTaskGroup(of: (Int, Bool).self) { group in
             for (idx, stream) in candidates.enumerated() {
                 group.addTask {
                     var req = URLRequest(url: stream.url)
-                    req.setValue(Self.safariUserAgent, forHTTPHeaderField: "User-Agent")
+                    req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
                     for (k, v) in stream.headers { req.setValue(v, forHTTPHeaderField: k) }
                     guard let (data, resp) = try? await probeSession.data(for: req),
                           let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
@@ -850,6 +826,52 @@ final class MiruroProvider: MovieSourceProviding {
         return comps.url ?? url
     }
 
+    private func infoPage(_ watchURL: URL) async throws -> MiruroPage {
+        var route = URLComponents(url: watchURL, resolvingAgainstBaseURL: false)!
+        let components = watchURL.pathComponents.dropFirst(2)
+        route.path = "/info/" + components.joined(separator: "/") + "/__data.json"
+        route.queryItems = [.init(name: "x-sveltekit-invalidated", value: "01")]
+        return try MiruroPage(await request(route.url!))
+    }
+
+    func schedule(weekOffset: Int = 0) async throws -> [DayOfWeek: [AnimeScheduleItem]] {
+        var route = URLComponents(url: activeBaseURL.appendingPathComponent("schedule/__data.json"), resolvingAgainstBaseURL: false)!
+        route.queryItems = [.init(name: "x-sveltekit-invalidated", value: "01")]
+        let page = try MiruroPage(await request(route.url!))
+        guard let baseStart = (page.field("weekStart") as? NSNumber)?.int64Value else { throw AnimeServiceError.invalidResponse }
+        let entries: [Object]
+        if weekOffset == 0 {
+            entries = page.field("entries") as? [Object] ?? []
+        } else {
+            var api = URLComponents(url: activeBaseURL.appendingPathComponent("api/schedule"), resolvingAgainstBaseURL: false)!
+            api.queryItems = [.init(name: "startAt", value: String(baseStart + Int64(weekOffset) * 604800)), .init(name: "track", value: "all")]
+            entries = (try JSONSerialization.jsonObject(with: await request(api.url!)) as? [Object]) ?? []
+        }
+        return scheduleEntries(entries, now: Date())
+    }
+
+    func scheduleEntries(_ entries: [Object], now: Date) -> [DayOfWeek: [AnimeScheduleItem]] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh") ?? .current
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "vi_VN")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "HH:mm"
+        var result: [DayOfWeek: [AnimeScheduleItem]] = [:]
+        for row in entries {
+            guard let rawID = row["id"] as? String, let seconds = row["airingAt"] as? NSNumber,
+                  seconds.doubleValue.isFinite, let media = row["media"] as? Object,
+                  let anime = catalogItems([media]).first,
+                  let day = DayOfWeek(rawValue: calendar.component(.weekday, from: Date(timeIntervalSince1970: seconds.doubleValue))) else { continue }
+            let date = Date(timeIntervalSince1970: seconds.doubleValue)
+            let episode = (row["episode"] as? NSNumber)?.stringValue ?? ""
+            result[day, default: []].append(AnimeScheduleItem(id: rawID, anime: anime, airTime: formatter.string(from: date),
+                pubTimeFormat: "", expectedEpisode: episode, statusText: date <= now ? "Đã chiếu" : "Sắp chiếu",
+                dayOfWeek: day, track: row["track"] as? String ?? ""))
+        }
+        return result
+    }
+
     private func watchPage(_ url: URL, number: String) async throws -> MiruroPage {
         var pageURL = url
         // Older saved cards may carry a noncanonical slug. SvelteKit can
@@ -879,58 +901,6 @@ final class MiruroProvider: MovieSourceProviding {
             return "\(path)?\(query)"
         }
         return path
-    }
-
-    private func requestBatch(paths: [String]) async throws -> [String: Data] {
-        #if canImport(WebKit) && canImport(UIKit)
-        if !usesExternalSession, Date() < preferWebBridgeUntil {
-            let map = try await MiruroWebBridge.shared.fetchBatch(paths: paths)
-            activeBaseURL = MiruroWebBridge.shared.activeOrigin
-            var results: [String: Data] = [:]
-            for (path, entry) in map where (200..<300).contains(entry.status) && !MiruroWebBridge.looksLikeCloudflare(entry.body) {
-                results[path] = Data(entry.body.utf8)
-            }
-            if !results.isEmpty { return results }
-        }
-        #endif
-
-        var results: [String: Data] = [:]
-        var hitCloudflare = false
-        await withTaskGroup(of: (String, Data?, Bool).self) { group in
-            for path in paths {
-                guard let url = URL(string: path, relativeTo: activeBaseURL)?.absoluteURL else { continue }
-                group.addTask { [weak self] in
-                    guard let self else { return (path, nil, false) }
-                    do {
-                        let data = try await self.directSessionRequest(url)
-                        return (path, data, false)
-                    } catch AnimeServiceError.http(let status) where status == 403 || status == 503 || status == 429 {
-                        return (path, nil, true)
-                    } catch {
-                        return (path, nil, false)
-                    }
-                }
-            }
-            for await (path, data, blocked) in group {
-                if let data { results[path] = data }
-                if blocked { hitCloudflare = true }
-            }
-        }
-
-        if !results.isEmpty && !hitCloudflare { return results }
-
-        #if canImport(WebKit) && canImport(UIKit)
-        if !usesExternalSession {
-            preferWebBridgeUntil = Date().addingTimeInterval(300)
-            let map = try await MiruroWebBridge.shared.fetchBatch(paths: paths)
-            activeBaseURL = MiruroWebBridge.shared.activeOrigin
-            for (path, entry) in map where (200..<300).contains(entry.status) && !MiruroWebBridge.looksLikeCloudflare(entry.body) {
-                results[path] = Data(entry.body.utf8)
-            }
-            return results
-        }
-        #endif
-        return results
     }
 
     private func directSessionRequest(_ url: URL) async throws -> Data {
