@@ -459,7 +459,7 @@ struct FeaturedHeroCard: View {
                         .overlay(Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1))
 
                     if !anime.score.isEmpty {
-                        Text("IMDb \(anime.score)")
+                        Text(anime.source == .miruro ? "\(anime.score)/10" : "IMDb \(anime.score)")
                             .font(.system(size: 12, weight: .heavy))
                             .foregroundColor(.black)
                             .padding(.horizontal, 11)
@@ -660,7 +660,7 @@ struct AnimeGridView: View {
                         }
                     }
                     .padding()
-                    if service.source.isMovie && hasMore {
+                    if (service.source.isMovie || service.source == .miruro) && hasMore {
                         Button { Task { await loadMore() } } label: {
                             if loadingMore { ProgressView() } else { Text("Tải thêm phim") }
                         }.buttonStyle(.bordered).disabled(loadingMore).padding()

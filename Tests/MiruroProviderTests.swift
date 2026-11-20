@@ -17,12 +17,21 @@ private final class MiruroFixture: URLProtocol {
         let query = Dictionary(uniqueKeysWithValues: (route.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         let data: Data
         switch route.path {
-        case "/__data.json" where query["x-sveltekit-invalidated"] == "11":
-            data = Data(#"{"type":"data","nodes":[{"type":"data","data":[{"hero":1},[2],{"id":3,"title":4,"coverUrl":6},"show-fixture",{"english":5},"Fixture","https://images.example/poster.jpg"]}]}"#.utf8)
-        case "/api/search/browse" where query["q"] == "Fixture & test" && query["type"] == "ANIME":
-            data = Data(#"{"data":[{"id":"show-fixture","title":{"english":"Fixture"},"cover_url":"https://images.example/poster.jpg"}]}"#.utf8)
-        case "/watch/show-fixture/fixture/__data.json" where query["x-sveltekit-invalidated"] == "11" && (query["ep"] == nil || query["ep"] == "1"):
+        case "/__data.json" where query.isEmpty:
+            data = Data("""
+            {"type":"data","nodes":[null,{"type":"data","data":[{"hero":1,"rails":8,"sideLists":10},[2],{"id":3,"title":4,"coverUrl":7},"show-fixture",{"english":5,"romaji":6},"The Ramparts of Ice Season 2","Koori no Jouheki 2nd Season","https://images.example/poster.jpg",["Promise",9],3,["Promise",11],4]}]}
+            {"type":"chunk","id":3,"data":[{"raw":1,"dub":6},{"latest":2},[3],{"animeId":4,"title":5},"sub-fixture",{"english":7},{"latest":8},"Sub fixture",[9],{"animeId":10,"title":11},"dub-fixture",{"english":12},"Dub fixture"]}
+            {"type":"chunk","id":4,"data":[{"airing":1,"upcoming":2},[3],[4],{"id":5,"title":7},{"id":6,"title":8},"airing","upcoming",{"english":9},{"english":10},"Airing","Upcoming"]}
+            """.utf8)
+        case "/api/search/browse" where query["q"] == "Fixture & test" && query["type"] == "ANIME",
+             "/api/search/browse" where query["genre"] == "Slice of Life" && query["offset"] == "24" && query["page"] == "2":
+            data = Data(#"{"data":[{"id":"show-fixture","title":{"english":"The Ramparts of Ice Season 2","romaji":"Koori no Jouheki 2nd Season"},"cover_url":"https://images.example/poster.jpg","average_score":81}]}"#.utf8)
+        case "/watch/show-fixture/the-ramparts-of-ice-season-2/__data.json":
+            data = Data(#"{"type":"redirect","location":"/watch/show-fixture/koori-no-jouheki-2nd-season?ep=1"}"#.utf8)
+        case "/watch/show-fixture/koori-no-jouheki-2nd-season/__data.json" where query == ["ep":"1","x-sveltekit-invalidated":"01"]:
             data = Self.payload
+        case "/api/sources" where query["id"] == "show-fixture" && query["n"] == "1.5":
+            data = Data(#"{"episodeNumber":1.5,"tracks":[{"track":"ssub","providers":[{"provider":"sun","servers":[{"streams":[{"format":"hls","url":"https://cdn.example/special.m3u8"}]}]}]}]}"#.utf8)
         default:
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
             return
@@ -49,14 +58,25 @@ private final class MiruroFixture: URLProtocol {
         let provider = MiruroProvider(session: URLSession(configuration: config))
         let home = try await provider.home { _ in }
         precondition(home.first?.items.first?.source == .miruro && !ContentSource.miruro.isMovie)
+        precondition(home.map(\.title) == ["Nổi bật","Tập mới · Phụ đề","Tập mới · Lồng tiếng","Đang chiếu","Sắp chiếu"])
+        precondition(home.compactMap { $0.items.first?.url.pathComponents[2] } == ["show-fixture","sub-fixture","dub-fixture","airing","upcoming"])
         let matches = try await provider.search("Fixture & test")
         precondition(matches.count == 1 && matches.first?.imageURL?.host == "images.example")
-        let detail = try await provider.detail(matches[0])
+        precondition(matches[0].url.lastPathComponent == "koori-no-jouheki-2nd-season" && matches[0].score == "8.1")
+        let next = try await provider.list(path: "genre=Slice of Life", page: 2)
+        precondition(next == matches)
+        let old = Anime(title: "Old card", url: URL(string: "https://miruro.cx/watch/show-fixture/the-ramparts-of-ice-season-2")!,
+                        imageURL: nil, episodeText: "", quality: "", score: "", source: .miruro)
+        let restored = try await provider.detail(old)
+        precondition(restored.episodes.count == 2)
+        let detail = try await provider.detail(home[0].items[0])
         precondition(detail.episodes.count == 2 && detail.episodes.last?.url.query == "ep=1.5")
         let result = try await provider.resolve(detail.episodes[0], refresh: false)
         precondition(!result.isWeb && result.url.path == "/extensionless")
         precondition(result.headers == ["Referer": "https://player.example/"])
         precondition(result.captions.first?.language == "vi" && result.nativeFallbacks.first?.url.host == "alt.example")
+        let special = try await provider.resolve(detail.episodes[1], refresh: false)
+        precondition(special.url.lastPathComponent == "special.m3u8")
         let fixture = try MiruroPage(MiruroFixture.payload)
         precondition(provider.streams(from: fixture, episode: 2).isEmpty)
 

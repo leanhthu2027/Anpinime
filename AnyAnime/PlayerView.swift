@@ -60,6 +60,7 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
     private var webPiPConfigured = false
     private var webPiPFrame: WKFrameInfo?
     private var webPiPSessionID: String?
+    private var webHomeRequestID: String?
     private var webPiPRequestID: String?
     private var webPiPTimeout: Timer?
     private var directWebView: WKWebView?
@@ -208,7 +209,11 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
 
     private func resetWebPictureInPicture(publishState: Bool = true) {
         webPiPTimeout?.invalidate(); webPiPTimeout = nil
-        webPiPSessionID = nil; webPiPRequestID = nil; webPiPFrame = nil
+        if let frame = webPiPFrame, let sessionID = webPiPSessionID {
+            fallbackWebView?.callAsyncJavaScript("window.__anpinimeArmHomePiP?.(sessionID, null, false)",
+                arguments: ["sessionID": sessionID], in: frame, contentWorld: .page, completionHandler: nil)
+        }
+        webPiPSessionID = nil; webHomeRequestID = nil; webPiPRequestID = nil; webPiPFrame = nil
         guard publishState else { return }
         playback.pictureInPicturePending = false
         playback.pictureInPictureActive = false
@@ -243,11 +248,20 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
               playback.playing, !playback.userPaused, playback.pictureInPictureSupported,
               !playback.pictureInPictureActive, !playback.pictureInPicturePending else { return }
         if automatically, !(UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true) { return }
-        let requestID = UUID().uuidString
+        let requestID = (automatically ? webHomeRequestID : nil) ?? UUID().uuidString
         let payload: [String: Any] = ["type": "AnPinimeCommand", "name": automatically ? "pipAutomatically" : "pip",
                                       "requestID": requestID, "sessionID": sessionID]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8) else { return }
+        beginWebPiPRequest(requestID, sessionID: sessionID)
+        webView.callAsyncJavaScript("window.__anpinimeRequestPiP && window.__anpinimeRequestPiP(command)",
+                                    arguments: ["command": payload], in: webPiPFrame, contentWorld: .page) { [weak self] result in
+            if case .failure = result, let self {
+                self.finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
+                    error: self.webPictureInPictureError("evaluation"))
+            }
+        }
+    }
+
+    private func beginWebPiPRequest(_ requestID: String, sessionID: String) {
         webPiPRequestID = requestID
         // Publish ownership before WebKit evaluates anything. A queued inline
         // state or a temporary disappearance must not pause a starting request.
@@ -262,20 +276,17 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
                     error: self.webPictureInPictureError("timeout"))
             }
         }
-        let frame = webPiPFrame
-        Task { @MainActor [weak self, weak webView] in
-            guard let self, let webView, self.active, webView === self.fallbackWebView,
-                  self.webPiPRequestID == requestID else { return }
-            do {
-                // Call the selected video frame directly. postMessage adds
-                // another browser turn, which may be suspended on Home.
-                _ = try await webView.callAsyncJavaScript(
-                    "window.__anpinimeRequestPiP && window.__anpinimeRequestPiP(command)",
-                    arguments: ["command": payload], in: frame, contentWorld: .page)
-            } catch {
-                self.finishWebPictureInPictureRequest(requestID, sessionID: sessionID,
-                    error: self.webPictureInPictureError("evaluation"))
-            }
+    }
+
+    private func armWebHomeRequest(sessionID: String, frame: WKFrameInfo) {
+        let id = UUID().uuidString
+        webHomeRequestID = id
+        let enabled = UserDefaults.standard.object(forKey: "AnPinime.automaticPiP") as? Bool ?? true
+        fallbackWebView?.callAsyncJavaScript("return window.__anpinimeArmHomePiP(sessionID, requestID, enabled)",
+            arguments: ["sessionID": sessionID, "requestID": id, "enabled": enabled], in: frame, contentWorld: .page) { [weak self] result in
+            guard let self, self.webHomeRequestID == id else { return }
+            if case .success(let armed) = result, armed as? Bool == true { return }
+            self.webHomeRequestID = nil
         }
     }
 
@@ -285,9 +296,12 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         if playback.pictureInPicturePending || playback.pictureInPictureActive {
             guard sessionID == webPiPSessionID, requestID == webPiPRequestID else { return }
         } else if sessionID != webPiPSessionID {
-            webPiPSessionID = sessionID; webPiPRequestID = nil
+            webPiPSessionID = sessionID; webPiPRequestID = nil; webHomeRequestID = nil
         }
         webPiPFrame = frame
+        if webHomeRequestID == nil, (state["pipSupported"] as? Bool) == true, UIApplication.shared.applicationState == .active {
+            armWebHomeRequest(sessionID: sessionID, frame: frame)
+        }
         playback.pictureInPictureSupported = (state["pipSupported"] as? Bool) == true
         if (state["pipActive"] as? Bool) == true {
             // WebKit can enter PiP through its own controls/system transition.
@@ -331,7 +345,10 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
         if let source = deferredDirectSource, directWebView != nil {
             deferredDirectSource = nil
             showNativePlayer(url: source.url, referer: source.referer)
-        } else { configureWebPictureInPicture() }
+        } else {
+            webHomeRequestID = nil
+            configureWebPictureInPicture()
+        }
     }
 
     private func perform(_ name: String, value: Double) {
@@ -1111,7 +1128,12 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             guard message.webView === fallbackWebView, playerController == nil, mpvController == nil,
                   let state = message.body as? [String: String],
                   let requestID = state["requestID"], let sessionID = state["sessionID"],
-                  requestID == webPiPRequestID, sessionID == webPiPSessionID else { return }
+                  sessionID == webPiPSessionID else { return }
+            if state["status"] == "pending", requestID == webHomeRequestID,
+               !playback.pictureInPictureActive, !playback.pictureInPicturePending, !playback.userPaused {
+                beginWebPiPRequest(requestID, sessionID: sessionID)
+            }
+            guard requestID == webPiPRequestID else { return }
             if state["status"] == "active" {
                 webPiPTimeout?.invalidate(); webPiPTimeout = nil
                 playback.pictureInPictureActive = true
@@ -1443,6 +1465,22 @@ final class AnimePlayerViewController: UIViewController, WKNavigationDelegate, W
             var pc=pipContext(v);syncPiP(v,pc);
             send('mediaState',{pipSessionID:pc.sessionID,pipRequestID:pc.requestID,pipError:pc.error,pipSupported:supportsPiP(v),pipActive:pipActive(v),pipPending:pipPending(v),time:isFinite(v.currentTime)?v.currentTime:0,duration:isFinite(v.duration)?v.duration:0,paused:v.paused,buffering:!v.paused&&v.readyState<3&&!advancing,ready:v.readyState>=2||(v.currentTime>0&&v.videoWidth>0),ended:v.ended,videoWidth:v.videoWidth||0,videoHeight:v.videoHeight||0,tracks:trackState(v)});
           }
+          var homeCommand=null;
+          window.__anpinimeArmHomePiP=function(sessionID,requestID,enabled){
+            if(!activeVideo||pipContext(activeVideo).sessionID!==sessionID)return false;
+            automaticPiP=enabled===true;
+            homeCommand=automaticPiP&&requestID?{name:'pipAutomatically',sessionID:sessionID,requestID:requestID}:null;
+            return true;
+          };
+          // Execute in the playing document as it becomes hidden. By the time
+          // the UIKit background notification arrives WebKit may be suspended.
+          document.addEventListener('visibilitychange',function(){
+            var v=activeVideo,command=homeCommand;
+            if(!document.hidden||!automaticPiP||!command||!v||v.paused||v.ended||v.__aaUserPaused||
+               !v.videoWidth||v.readyState<2||isAdvertisement(v)||command.sessionID!==pipContext(v).sessionID)return;
+            homeCommand=null;
+            requestPiP(v,command);state();
+          });
           window.__anpinimeRequestPiP=function(command){requestPiP(activeVideo,command);state();};
           window.addEventListener('message',function(event){
             var c=event.data;if(!c||c.type!=='AnPinimeCommand')return;

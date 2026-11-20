@@ -17,8 +17,8 @@ struct MiruroPage {
         var chunks: [Int: [Any]] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
             let packet = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? Object
-            if let entries = packet?["nodes"] as? [Object] {
-                nodes += entries.compactMap { $0["data"] as? [Any] }
+            if let entries = packet?["nodes"] as? [Any] {
+                nodes += entries.compactMap { ($0 as? Object)?["data"] as? [Any] }
             } else if packet?["type"] as? String == "chunk", let id = packet?["id"] as? Int,
                       let table = packet?["data"] as? [Any] {
                 chunks[id] = table
@@ -73,12 +73,21 @@ final class MiruroProvider: MovieSourceProviding {
 
     let baseURL = URL(string: "https://miruro.cx/")!
     let categories: [AnimeCategory] = [
-        .init(title: "Đang chiếu", path: "airing"),
-        .init(title: "Nổi bật", path: "featured")
-    ]
+        .init(title: "Thịnh hành", path: "sort=TRENDING_DESC"),
+        .init(title: "Phổ biến", path: "sort=POPULARITY_DESC"),
+        .init(title: "Điểm cao", path: "sort=SCORE_DESC"),
+        .init(title: "Đang chiếu", path: "status=RELEASING"),
+        .init(title: "Sắp chiếu", path: "status=NOT_YET_RELEASED"),
+        .init(title: "Trọn bộ", path: "status=FINISHED"),
+        .init(title: "Phim lẻ", path: "format=MOVIE"),
+        .init(title: "Phim bộ", path: "format=TV"),
+        .init(title: "OVA", path: "format=OVA")
+    ] + ["Action", "Adventure", "Comedy", "Drama", "Fantasy", "Horror", "Mecha",
+         "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports",
+         "Supernatural", "Thriller"].map { AnimeCategory(title: $0, path: "genre=" + $0) }
     let notice = ""
     private let session: URLSession
-    private var cachedSections: [AnimeSection] = []
+    private var initialStreams: (url: URL, date: Date, streams: [NativeStream])?
 
     init(session: URLSession? = nil) {
         let config = URLSessionConfiguration.ephemeral
@@ -87,36 +96,44 @@ final class MiruroProvider: MovieSourceProviding {
         self.session = session ?? URLSession(configuration: config)
     }
 
-    func invalidate() { cachedSections = [] }
+    func invalidate() { initialStreams = nil }
 
     func home(onInitial: ([AnimeSection]) -> Void) async throws -> [AnimeSection] {
-        let page = try MiruroPage(await request(dataURL(baseURL)))
+        let page = try MiruroPage(await request(baseURL.appendingPathComponent("__data.json")))
+        let rails = page.field("rails") as? Object
+        let side = page.field("sideLists") as? Object
         var sections: [AnimeSection] = []
-        if let hero = page.field("hero") as? [Object] {
-            let items = catalogItems(hero)
-            if !items.isEmpty { sections.append(.init(title: "Nổi bật", items: items, categoryPath: "featured")) }
+        func append(_ title: String, _ rows: Any?, path: String? = nil) {
+            let items = catalogItems(rows as? [Object] ?? [])
+            if !items.isEmpty { sections.append(.init(title: title, items: items, categoryPath: path)) }
         }
-        // The initial HTML references deferred rails. Keep the visible hero
-        // independent of their availability, as the site does.
-        if let rails = page.field("rails") {
-            let items = catalogItems(rows(in: rails))
-            if !items.isEmpty { sections.append(.init(title: "Đang chiếu", items: items, categoryPath: "airing")) }
-        }
+        append("Nổi bật", page.field("hero") ?? page.field("spotlight"))
+        append("Tập mới · Phụ đề", (rails?["raw"] as? Object)?["latest"])
+        append("Tập mới · Lồng tiếng", (rails?["dub"] as? Object)?["latest"])
+        append("Đang chiếu", side?["airing"], path: "status=RELEASING")
+        append("Sắp chiếu", side?["upcoming"], path: "status=NOT_YET_RELEASED")
         guard !sections.isEmpty else { throw AnimeServiceError.emptyData }
-        cachedSections = sections
         onInitial(sections)
         return sections
     }
 
     func list(path: String, page: Int) async throws -> [Anime] {
-        guard page == 1 else { return [] }
-        if cachedSections.isEmpty { _ = try await home { _ in } }
-        return cachedSections.first(where: { $0.categoryPath == path })?.items ?? []
+        guard categories.contains(where: { $0.path == path }), page > 0,
+              let separator = path.firstIndex(of: "=") else { return [] }
+        let name = String(path[..<separator])
+        var filters = [URLQueryItem(name: name, value: String(path[path.index(after: separator)...]))]
+        if name != "sort" { filters.append(.init(name: "sort", value: "POPULARITY_DESC")) }
+        return try await browse(filters, page: page)
     }
 
     func search(_ query: String) async throws -> [Anime] {
+        try await browse([.init(name: "q", value: query)], page: 1)
+    }
+
+    private func browse(_ filters: [URLQueryItem], page: Int) async throws -> [Anime] {
         var route = URLComponents(url: baseURL.appendingPathComponent("api/search/browse"), resolvingAgainstBaseURL: false)!
-        route.queryItems = [.init(name: "q", value: query), .init(name: "limit", value: "32"), .init(name: "type", value: "ANIME")]
+        route.queryItems = filters + [.init(name: "type", value: "ANIME"), .init(name: "limit", value: "24"),
+                                      .init(name: "page", value: String(page)), .init(name: "offset", value: String((page - 1) * 24))]
         guard let url = route.url, let json = try JSONSerialization.jsonObject(with: await request(url)) as? Object,
               let items = json["data"] as? [Object] else { throw AnimeServiceError.invalidResponse }
         return catalogItems(items)
@@ -124,8 +141,13 @@ final class MiruroProvider: MovieSourceProviding {
 
     func detail(_ anime: Anime) async throws -> AnimeDetail {
         guard anime.source == .miruro, watchRoute(anime.url) else { throw AnimeServiceError.invalidURL }
-        let page = try MiruroPage(await request(dataURL(anime.url)))
-        return try detail(from: page, anime: anime)
+        let page = try await watchPage(anime.url, number: "1")
+        let detail = try detail(from: page, anime: anime)
+        if let first = detail.episodes.first(where: { $0.number == 1 }) {
+            let options = streams(from: page, episode: 1)
+            initialStreams = options.isEmpty ? nil : (first.url, Date(), options)
+        }
+        return detail
     }
 
     func detail(from page: MiruroPage, anime: Anime) throws -> AnimeDetail {
@@ -159,23 +181,40 @@ final class MiruroProvider: MovieSourceProviding {
         guard episode.source == .miruro, watchRoute(episode.url),
               let rawNumber = URLComponents(url: episode.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "ep" })?.value,
               let number = Double(rawNumber) else { throw AnimeServiceError.invalidURL }
-        let page = try MiruroPage(await request(dataURL(episode.url)))
-        let options = streams(from: page, episode: number)
+        let options: [NativeStream]
+        if !refresh, let cached = initialStreams, cached.url == episode.url, Date().timeIntervalSince(cached.date) < 180 {
+            options = cached.streams
+        } else {
+            var route = URLComponents(url: baseURL.appendingPathComponent("api/sources"), resolvingAgainstBaseURL: false)!
+            route.queryItems = [.init(name: "id", value: episode.url.pathComponents[2]), .init(name: "n", value: rawNumber)]
+            let json = try JSONSerialization.jsonObject(with: await request(route.url!)) as? Object
+            options = streams(from: json, episode: number)
+        }
         guard let first = options.first else { throw AnimeServiceError.emptyData }
         return ResolvedPlayback(url: first.url, headers: first.headers, webURL: nil, isWeb: false,
                                 nativeFallbacks: Array(options.dropFirst()), captions: first.captions)
     }
 
     func streams(from page: MiruroPage, episode: Double) -> [NativeStream] {
-        guard let data = page.field("sourcesData") as? Object,
-              (data["episodeNumber"] as? NSNumber)?.doubleValue == episode,
+        streams(from: page.field("sourcesData") as? Object, episode: episode)
+    }
+
+    private func streams(from data: Object?, episode: Double) -> [NativeStream] {
+        guard let data, (data["episodeNumber"] as? NSNumber)?.doubleValue == episode,
               let tracks = data["tracks"] as? [Object] else { return [] }
+        let order = data["providerOrder"] as? [String] ?? []
+        let config = data["config"] as? [String: Object] ?? [:]
         var seen = Set<URL>()
         var options: [NativeStream] = []
         // Soft subs first, then subtitled video and dubbed audio.
         for track in ["ssub", "sub", "dub", "raw"] {
             for row in tracks where row["track"] as? String == track {
-                for provider in row["providers"] as? [Object] ?? [] {
+                let providers = row["providers"] as? [Object] ?? []
+                func priority(_ provider: Object) -> Int {
+                    order.firstIndex(of: provider["provider"] as? String ?? "") ?? order.count
+                }
+                for provider in providers.sorted(by: { priority($0) < priority($1) }) {
+                    if let name = provider["provider"] as? String, config[name]?["visible"] as? Bool == false { continue }
                     for server in provider["servers"] as? [Object] ?? [] {
                         let headers = (server["headers"] as? [String: String] ?? [:]).filter { name, value in
                             ["origin", "referer", "user-agent"].contains(name.lowercased())
@@ -203,26 +242,25 @@ final class MiruroProvider: MovieSourceProviding {
             guard let id = row["animeId"] as? String ?? row["id"] as? String,
                   id.range(of: #"^[A-Za-z0-9_-]{1,100}$"#, options: .regularExpression) != nil,
                   let title = title(row), seen.insert(id).inserted else { return nil }
-            let slug = title.folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US"))
-                .lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-            let url = baseURL.appendingPathComponent("watch").appendingPathComponent(id).appendingPathComponent(slug.isEmpty ? "anime" : slug)
+            let names = row["title"] as? Object
+            // Miruro displays the selected language but canonicalizes watch URLs
+            // using the shorter English/Romaji title, with English winning ties.
+            let candidates = [names?["english"], names?["romaji"]].compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let routeTitle = candidates.min { $0.utf16.count < $1.utf16.count } ?? title
+            let slug = routeTitle.folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US"))
+                .lowercased().replacingOccurrences(of: #"[^a-z0-9\s-]"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"[\s-]+"#, with: "-", options: .regularExpression)
+            var url = baseURL.appendingPathComponent("watch").appendingPathComponent(id)
+            if !slug.isEmpty && slug != id { url.appendPathComponent(slug) }
             let count = (row["episode"] ?? row["episodeCount"] ?? row["episode_count"]) as? NSNumber
             return Anime(title: title, url: url, imageURL: Self.remoteURL(row["coverUrl"] ?? row["cover_url"]),
-                         bannerURL: Self.remoteURL(row["backgroundUrl"] ?? row["banner_url"]),
+                         bannerURL: Self.remoteURL(row["backdropUrl"] ?? row["backgroundUrl"] ?? row["banner_url"] ?? row["background_url"]),
                          episodeText: count.map { "Tập " + $0.stringValue } ?? "", quality: row["format"] as? String ?? "",
-                         score: (row["averageScore"] ?? row["average_score"]).flatMap { ($0 as? NSNumber)?.stringValue } ?? "",
+                         score: ((row["averageScore"] ?? row["average_score"]) as? NSNumber).map { String(format: "%.1f", $0.doubleValue / 10) } ?? "",
+                         summary: (row["description"] as? String ?? "").replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
                          source: .miruro)
         }
-    }
-
-    private func rows(in value: Any, depth: Int = 0) -> [Object] {
-        guard depth < 8 else { return [] }
-        if let object = value as? Object {
-            if title(object) != nil, object["id"] != nil || object["animeId"] != nil { return [object] }
-            return object.keys.sorted().flatMap { rows(in: object[$0]!, depth: depth + 1) }
-        }
-        return (value as? [Any] ?? []).flatMap { rows(in: $0, depth: depth + 1) }
     }
 
     private func title(_ row: Object) -> String? {
@@ -231,15 +269,30 @@ final class MiruroProvider: MovieSourceProviding {
     }
 
     private func watchRoute(_ url: URL) -> Bool {
-        url.scheme == "https" && url.host == baseURL.host && url.pathComponents.count == 4 && url.pathComponents[1] == "watch"
+        url.scheme == "https" && url.host == baseURL.host && url.user == nil && url.password == nil && url.port == nil
+            && (3...4).contains(url.pathComponents.count) && url.pathComponents[1] == "watch"
     }
 
-    private func dataURL(_ url: URL) -> URL {
-        var route = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        route.path = route.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        route.path = (route.path.isEmpty ? "" : "/" + route.path) + "/__data.json"
-        route.queryItems = (route.queryItems ?? []) + [.init(name: "x-sveltekit-invalidated", value: "11")]
-        return route.url!
+    private func watchPage(_ url: URL, number: String) async throws -> MiruroPage {
+        var pageURL = url
+        // Older saved cards may carry a noncanonical slug. SvelteKit can
+        // return a JSON redirect instead of following it as an HTTP redirect.
+        for _ in 0..<3 {
+            var route = URLComponents(url: pageURL.appendingPathComponent("__data.json"), resolvingAgainstBaseURL: false)!
+            route.queryItems = [.init(name: "ep", value: number), .init(name: "x-sveltekit-invalidated", value: "01")]
+            let data = try await request(route.url!)
+            if let packet = try? JSONSerialization.jsonObject(with: data) as? Object,
+               packet["type"] as? String == "redirect" {
+                guard let location = packet["location"] as? String,
+                      let next = URL(string: location, relativeTo: pageURL)?.absoluteURL,
+                      watchRoute(next), next.pathComponents[2] == url.pathComponents[2],
+                      next.path != pageURL.path else { throw AnimeServiceError.invalidResponse }
+                pageURL = next
+                continue
+            }
+            return try MiruroPage(data)
+        }
+        throw AnimeServiceError.invalidResponse
     }
 
     private func request(_ url: URL) async throws -> Data {

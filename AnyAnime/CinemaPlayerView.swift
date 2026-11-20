@@ -220,12 +220,9 @@ struct PlayerView: View {
         }
         .onDisappear {
             hideTask?.cancel()
-            // WebKit fullscreen and AVKit PiP can temporarily cover this host.
-            // Actual dismissal shuts down the backend in dismantle.
-            if current.source != .aether && playback.engine != "mpv" && playback.engine != "AVPlayer"
-                && !playback.pictureInPictureActive && !playback.pictureInPicturePending {
-                playback.send("pause")
-            }
+            // Home and WebKit presentation can hide the SwiftUI view before
+            // PiP reports ownership. Actual dismissal tears down the decoder
+            // in dismantleUIViewController. Disappearance isn't a user pause.
             UIApplication.shared.isIdleTimerDisabled = false
             UIScreen.main.brightness = originalBrightness
         }

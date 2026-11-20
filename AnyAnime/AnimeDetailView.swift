@@ -408,6 +408,11 @@ struct AnimeDetailView: View {
         message = ""
         do {
             if anime.source != .anime {
+                if anime.source == .miruro, detail == nil {
+                    detail = AnimeDetail(title: anime.title, posterURL: anime.imageURL, bannerURL: anime.bannerURL,
+                                         summary: anime.summary, info: anime.quality, episodes: [])
+                }
+                if anime.source == .miruro && detail?.episodes.isEmpty == true { episodeStatus = .loading }
                 loading = detail == nil
                 let full = try await service.detail(for: anime)
                 try Task.checkCancellation()
