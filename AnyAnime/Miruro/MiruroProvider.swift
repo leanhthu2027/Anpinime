@@ -15,6 +15,7 @@ struct MiruroPage {
     typealias Object = [String: Any]
     private let nodes: [[Any]]
     private let chunks: [Int: [Any]]
+    private let prefersPoolReferences: Bool
 
     init(_ data: Data) throws {
         guard data.count <= 8 * 1024 * 1024, let text = String(data: data, encoding: .utf8) else {
@@ -36,6 +37,17 @@ struct MiruroPage {
         guard !nodes.isEmpty else { throw AnimeServiceError.emptyData }
         self.nodes = nodes
         self.chunks = chunks
+        // The Android fixtures store chunk IDs directly. The current web format
+        // references a pool slot holding the ID. An unambiguous slot in the
+        // same response disambiguates values which are also valid chunk IDs.
+        prefersPoolReferences = nodes.contains { pool in
+            pool.contains { value in
+                guard let tag = value as? [Any], tag.count == 2, tag[0] as? String == "Promise",
+                      let ref = Self.intIndex(tag[1]), chunks[ref] == nil,
+                      pool.indices.contains(ref), let id = Self.intIndex(pool[ref]) else { return false }
+                return chunks[id] != nil
+            }
+        }
     }
 
     func field(_ key: String) -> Any? {
@@ -86,15 +98,10 @@ struct MiruroPage {
         if let array = value as? [Any] {
             if array.first as? String == "Promise", array.count == 2,
                let rawRef = Self.intIndex(array[1]) {
-                if table.indices.contains(rawRef),
-                   let id = Self.intIndex(table[rawRef]),
-                   let chunk = chunks[id] {
-                    return decode(0, in: chunk, depth: depth + 1, budget: &budget)
-                }
-                if let chunk = chunks[rawRef] {
-                    return decode(0, in: chunk, depth: depth + 1, budget: &budget)
-                }
-                return nil
+                let indirect = table.indices.contains(rawRef) ? Self.intIndex(table[rawRef]).flatMap { chunks[$0] } : nil
+                let direct = chunks[rawRef]
+                guard let chunk = prefersPoolReferences ? indirect ?? direct : direct ?? indirect else { return nil }
+                return decode(0, in: chunk, depth: depth + 1, budget: &budget)
             }
             return array.compactMap { entry -> Any? in
                 guard let next = Self.intIndex(entry) else { return nil }
@@ -483,8 +490,12 @@ final class MiruroProvider: MovieSourceProviding {
                                .init(name: "page", value: String(page))]
         if page > 1 { query.append(.init(name: "offset", value: String((page - 1) * 24))) }
         route.queryItems = query
-        guard let url = route.url, let json = try JSONSerialization.jsonObject(with: await request(url)) as? Object,
-              let items = json["data"] as? [Object] else { throw AnimeServiceError.invalidResponse }
+        guard let url = route.url else { throw AnimeServiceError.invalidURL }
+        let response = try JSONSerialization.jsonObject(with: await request(url))
+        let json = response as? Object ?? [:]
+        let items = response as? [Object] ?? ["data", "items", "results", "media"].lazy.compactMap { json[$0] as? [Object] }.first
+            ?? (json["Page"] as? Object)?["media"] as? [Object]
+        guard let items else { throw AnimeServiceError.invalidResponse }
         return catalogItems(items)
     }
 
@@ -496,19 +507,48 @@ final class MiruroProvider: MovieSourceProviding {
         }
         let rebasedURL = rebaseToActiveHost(anime.url)
         async let info = try? infoPage(rebasedURL)
-        let page = try await watchPage(rebasedURL, number: "1")
-        var detail = try detail(from: page, anime: anime)
-        if let infoPage = await info, let metadata = infoPage.field("detail") as? Object {
+        let page: MiruroPage?
+        var detail: AnimeDetail
+        do {
+            page = try await watchPage(rebasedURL, number: "1")
+        } catch {
+            try Task.checkCancellation()
+            guard let infoPage = await info, infoPage.field("detail") is Object else { throw error }
+            page = nil
+        }
+        let infoPage = await info
+        let metadata = infoPage?.field("detail") as? Object
+        if let page, let parsed = try? self.detail(from: page, anime: anime) {
+            detail = parsed
+        } else if metadata != nil {
+            detail = AnimeDetail(title: anime.title, posterURL: anime.imageURL, bannerURL: anime.bannerURL,
+                                 summary: anime.summary, info: "", episodes: [])
+        } else { throw AnimeServiceError.emptyData }
+        if let metadata {
+            var episodes = detail.episodes
+            if episodes.isEmpty, let rows = infoPage?.field("episodes") as? [Object] {
+                let counts = metadata["episode_counts"] as? Object ?? [:]
+                let published = ["sub", "dub", "raw"].compactMap { counts[$0] as? Int }.max()
+                let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+                let aired = rows.filter { row in
+                    guard let number = row["episode_number"] as? NSNumber else { return false }
+                    if let published { return number.doubleValue <= Double(published) }
+                    guard let date = row["aired_on"] as? String, date.count == 10 else { return false }
+                    return date <= today
+                }
+                episodes = parseEpisodeRows(aired, baseWatchURL: anime.url)
+            }
+            let infoText = [metadata["format"] as? String, (metadata["season_year"] as? Int).map(String.init)].compactMap { $0 }.joined(separator: " · ")
             detail = AnimeDetail(title: title(metadata) ?? detail.title,
                                  posterURL: Self.remoteURL(metadata["cover_url"]) ?? detail.posterURL,
                                  bannerURL: Self.remoteURL(metadata["background_url"] ?? metadata["banner_url"]) ?? detail.bannerURL,
                                  summary: (metadata["description"] as? String ?? detail.summary).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
-                                 info: [metadata["format"] as? String, (metadata["season_year"] as? Int).map(String.init)].compactMap { $0 }.joined(separator: " · "),
-                                 episodes: detail.episodes)
+                                 info: infoText.isEmpty ? detail.info : infoText,
+                                 episodes: episodes)
         }
 
         // Fallback to /api/episodes if watchPage chunk omitted episodes
-        if !usesExternalSession, detail.episodes.isEmpty {
+        if detail.episodes.isEmpty {
             var epRoute = URLComponents(url: activeBaseURL.appendingPathComponent("api/episodes"), resolvingAgainstBaseURL: false)!
             epRoute.queryItems = [.init(name: "id", value: mediaID)]
             if let epURL = epRoute.url,
@@ -523,14 +563,15 @@ final class MiruroProvider: MovieSourceProviding {
             }
         }
 
-        if let first = detail.episodes.first(where: { $0.number == 1 }) {
+        if let page, let first = detail.episodes.first(where: { $0.number == 1 }) {
             let options = streams(from: page, episode: 1)
             initialStreams = options.isEmpty ? nil : (first.url, Date(), options)
             if !options.isEmpty {
                 sourcesCache["\(mediaID):1"] = (Date(), options)
             }
         }
-        if !usesExternalSession {
+        try Task.checkCancellation()
+        if !usesExternalSession, !detail.episodes.isEmpty {
             if detailCache.count >= 40 { detailCache.removeAll() }
             detailCache[mediaID] = (Date(), detail)
         }
@@ -538,13 +579,14 @@ final class MiruroProvider: MovieSourceProviding {
     }
 
     func detail(from page: MiruroPage, anime: Anime) throws -> AnimeDetail {
-        guard let media = page.field("media") as? Object else { throw AnimeServiceError.emptyData }
         let decoded = (page.field("episodesData") as? Object) ?? page.chunkMatching { $0["episodes"] is [Object] }
+        let media = page.field("media") as? Object ?? [:]
+        guard !media.isEmpty || decoded != nil else { throw AnimeServiceError.emptyData }
         let items = decoded?["episodes"] as? [Object] ?? []
         let episodes = parseEpisodeRows(items, baseWatchURL: anime.url)
         let cover = media["coverImage"] as? Object
         return AnimeDetail(title: title(media) ?? anime.title,
-                           posterURL: Self.remoteURL(cover?["large"]) ?? anime.imageURL,
+                           posterURL: Self.remoteURL(cover?["extraLarge"] ?? cover?["large"] ?? cover?["medium"]) ?? anime.imageURL,
                            bannerURL: Self.remoteURL(media["bannerImage"]) ?? anime.bannerURL,
                            summary: (media["description"] as? String ?? anime.summary).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
                            info: [media["format"] as? String, (media["seasonYear"] as? Int).map(String.init)].compactMap { $0 }.joined(separator: " · "),
@@ -554,7 +596,7 @@ final class MiruroProvider: MovieSourceProviding {
     private func parseEpisodeRows(_ items: [Object], baseWatchURL: URL) -> [Episode] {
         var seen = Set<Double>()
         return items.compactMap { row -> Episode? in
-            guard let number = row["number"] as? NSNumber, number.doubleValue.isFinite,
+            guard let number = (row["number"] ?? row["episode_number"]) as? NSNumber, number.doubleValue.isFinite,
                   number.doubleValue > 0, number.doubleValue < 100_000,
                   seen.insert(number.doubleValue).inserted,
                   var route = URLComponents(url: baseWatchURL, resolvingAgainstBaseURL: false) else { return nil }
@@ -587,7 +629,7 @@ final class MiruroProvider: MovieSourceProviding {
                let json = try? JSONSerialization.jsonObject(with: data) as? Object {
                 options = streams(from: json, episode: number)
             }
-            if options.isEmpty, !usesExternalSession {
+            if options.isEmpty {
                 if let page = try? await watchPage(rebaseToActiveHost(episode.url), number: rawNumber) {
                     options = streams(from: page, episode: number)
                 }
@@ -602,6 +644,7 @@ final class MiruroProvider: MovieSourceProviding {
             options = await prioritizeHealthyStream(options)
         }
 
+        try Task.checkCancellation()
         guard let first = options.first else { throw AnimeServiceError.emptyData }
         return ResolvedPlayback(url: first.url, headers: first.headers, webURL: nil, isWeb: false,
                                 nativeFallbacks: Array(options.dropFirst()), captions: first.captions, label: first.label, nativeFormat: first.format)
@@ -616,57 +659,51 @@ final class MiruroProvider: MovieSourceProviding {
         guard let data else { return [] }
         if let epNum = data["episodeNumber"] as? NSNumber, epNum.doubleValue != episode { return [] }
         guard let tracks = data["tracks"] as? [Object] else { return [] }
-        let order = data["providerOrder"] as? [String] ?? []
+        let order = (data["providerOrder"] as? [String] ?? []).map { $0.lowercased() }
         let config = data["config"] as? [String: Object] ?? [:]
 
-        // First pass: gather all subtitles across sibling providers so providers without
-        // own subtitles (e.g. `bee`) inherit Vietnamese/English softsubs from `sun`/`hop`.
-        var sharedCaptions: [RemoteCaption] = []
-        var sharedCaptionURLs = Set<URL>()
-        for row in tracks {
-            for provider in row["providers"] as? [Object] ?? [] {
-                let providerHeaders = Self.extractSafeHeaders(
-                    (provider["servers"] as? [Object])?.first?["headers"] as? [String: String] ?? [:]
-                )
-                for subtitle in provider["subtitles"] as? [Object] ?? [] {
-                    guard let url = Self.remoteURL(subtitle["file"]),
-                          let label = subtitle["label"] as? String,
-                          sharedCaptionURLs.insert(url).inserted else { continue }
-                    let lang = subtitle["language"] as? String ?? ""
-                    let captionHeaders = Self.cdnHeaders(for: url, existing: providerHeaders)
-                    sharedCaptions.append(RemoteCaption(title: label, language: lang, url: url, headers: captionHeaders))
-                }
+        func visibleProviders(_ row: Object) -> [Object] {
+            (row["providers"] as? [Object] ?? []).filter { provider in
+                let id = (provider["provider"] as? String ?? "").lowercased()
+                return config[id]?["visible"] as? Bool != false
             }
         }
-        sharedCaptions = Self.sortCaptionsVietnameseFirst(sharedCaptions)
-
+        func captions(_ provider: Object) -> [RemoteCaption] {
+            let headers = Self.extractSafeHeaders((provider["servers"] as? [Object])?.first?["headers"] as? [String: String] ?? [:])
+            return (provider["subtitles"] as? [Object] ?? []).compactMap { subtitle in
+                guard let url = Self.remoteURL(subtitle["file"]) ?? Self.remoteURL(subtitle["url"]) else { return nil }
+                let label = (subtitle["label"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let raw = (subtitle["language"] as? String ?? "").lowercased()
+                let language = AetherSubtitleClient.languageCode(raw)
+                let code: String
+                if raw == "vn" { code = "vi" }
+                else if language != "und" { code = language }
+                else { code = AetherSubtitleClient.languageCode(label) }
+                return RemoteCaption(title: label.isEmpty ? (code == "und" ? "Phụ đề" : code.uppercased()) : label,
+                                     language: code, url: url, headers: Self.cdnHeaders(for: url, existing: headers))
+            }
+        }
+        let sharedCaptions = Self.sortCaptionsVietnameseFirst(tracks.flatMap(visibleProviders).flatMap(captions))
         var seen = Set<URL>()
         var options: [NativeStream] = []
         // Soft subs first, then subtitled video and dubbed audio.
         for track in ["ssub", "sub", "dub", "raw"] {
-            for row in tracks where row["track"] as? String == track {
-                let providers = row["providers"] as? [Object] ?? []
+            for row in tracks where (row["track"] as? String ?? "sub").lowercased() == track {
+                let providers = visibleProviders(row)
                 func priority(_ provider: Object) -> Int {
-                    order.firstIndex(of: provider["provider"] as? String ?? "") ?? order.count
+                    order.firstIndex(of: (provider["provider"] as? String ?? "").lowercased()) ?? order.count
                 }
                 for provider in providers.sorted(by: { priority($0) < priority($1) }) {
                     let providerName = provider["provider"] as? String ?? ""
-                    if !providerName.isEmpty, config[providerName]?["visible"] as? Bool == false { continue }
+                    var ownCaptions = Self.sortCaptionsVietnameseFirst(captions(provider))
+                    if ownCaptions.isEmpty {
+                        ownCaptions = sharedCaptions
+                    } else if !ownCaptions.contains(where: { $0.language == "vi" }) {
+                        ownCaptions = sharedCaptions.filter { $0.language == "vi" } + ownCaptions
+                    }
                     for (serverIdx, server) in (provider["servers"] as? [Object] ?? []).enumerated() {
                         let baseHeaders = Self.extractSafeHeaders(server["headers"] as? [String: String] ?? [:])
-                        var ownCaptions = (provider["subtitles"] as? [Object] ?? []).compactMap { subtitle -> RemoteCaption? in
-                            guard let url = Self.remoteURL(subtitle["file"]), let label = subtitle["label"] as? String else { return nil }
-                            return RemoteCaption(title: label, language: subtitle["language"] as? String ?? "",
-                                                 url: url, headers: Self.cdnHeaders(for: url, existing: baseHeaders))
-                        }
-                        if ownCaptions.isEmpty {
-                            ownCaptions = sharedCaptions
-                        } else if !sharedCaptions.isEmpty {
-                            var ownURLs = Set(ownCaptions.map(\.url))
-                            let extra = sharedCaptions.filter { ownURLs.insert($0.url).inserted }
-                            ownCaptions = Self.sortCaptionsVietnameseFirst(ownCaptions + extra)
-                        }
-                        let serverTitle = (server["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let serverTitle = ((server["server"] ?? server["name"]) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                         let trackBadge: String = {
                             switch track {
                             case "ssub": return "SoftSub"
@@ -678,11 +715,13 @@ final class MiruroProvider: MovieSourceProviding {
                         let displayProvider = providerName.isEmpty ? "Server \(serverIdx + 1)" : providerName.capitalized
                         let label = serverTitle.isEmpty ? "\(displayProvider) · \(trackBadge)" : "\(displayProvider) (\(serverTitle)) · \(trackBadge)"
                         for stream in server["streams"] as? [Object] ?? [] {
-                            guard ["hls", "mp4"].contains(stream["format"] as? String ?? ""),
-                                  let url = Self.remoteURL(stream["url"]), seen.insert(url).inserted else { continue }
+                            guard let url = Self.remoteURL(stream["url"]) else { continue }
+                            let declared = (stream["format"] as? String ?? "").lowercased()
+                            let format = declared.isEmpty ? (url.pathExtension.lowercased() == "mp4" ? "mp4" : "hls") : declared
+                            guard ["hls", "mp4"].contains(format), seen.insert(url).inserted else { continue }
                             let finalHeaders = Self.cdnHeaders(for: url, existing: baseHeaders)
                             options.append(NativeStream(url: url, headers: finalHeaders, captions: ownCaptions, label: label,
-                                                        format: stream["format"] as? String ?? ""))
+                                                        format: format))
                         }
                     }
                 }
@@ -726,56 +765,57 @@ final class MiruroProvider: MovieSourceProviding {
             if lang.hasPrefix("en") || title.contains("english") { return 1 }
             return 2
         }
-        return captions.enumerated().sorted { a, b in
+        var seen = Set<URL>()
+        return captions.filter { seen.insert($0.url).inserted }.enumerated().sorted { a, b in
             let ra = rank(a.element), rb = rank(b.element)
             return ra != rb ? ra < rb : a.offset < b.offset
         }.map(\.element)
     }
 
-    private func prioritizeHealthyStream(_ streams: [NativeStream]) async -> [NativeStream] {
-        let probeCount = min(3, streams.count)
-        let candidates = Array(streams.prefix(probeCount))
-        let probeSession: URLSession = {
-            let cfg = URLSessionConfiguration.ephemeral
-            cfg.timeoutIntervalForRequest = 3.5
-            cfg.timeoutIntervalForResource = 4.0
-            return URLSession(configuration: cfg)
-        }()
-        defer { probeSession.invalidateAndCancel() }
-
+    func prioritizeHealthyStream(_ streams: [NativeStream], configuration: URLSessionConfiguration = .ephemeral) async -> [NativeStream] {
+        configuration.timeoutIntervalForResource = 4
+        configuration.httpCookieStorage = nil
+        configuration.urlCache = nil
         let userAgent = Self.safariUserAgent
-        let winnerIndex: Int? = await withTaskGroup(of: (Int, Bool).self) { group in
-            for (idx, stream) in candidates.enumerated() {
-                group.addTask {
-                    var req = URLRequest(url: stream.url)
-                    req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-                    for (k, v) in stream.headers { req.setValue(v, forHTTPHeaderField: k) }
-                    guard let (data, resp) = try? await probeSession.data(for: req),
-                          let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                          !data.isEmpty else {
-                        return (idx, false)
+        for start in stride(from: 0, to: streams.count, by: 3) {
+            if Task.isCancelled { return streams }
+            let end = min(start + 3, streams.count)
+            let winner = await withTaskGroup(of: (Int, Bool).self, returning: Int?.self) { group in
+                for index in start..<end {
+                    let stream = streams[index]
+                    group.addTask {
+                        var headers = stream.headers
+                        if !headers.keys.contains(where: { $0.lowercased() == "user-agent" }) { headers["User-Agent"] = userAgent }
+                        let probe = Phim4KMediaProbe(limit: 1024)
+                        guard let response = try? await probe.inspect(stream.url, headers: headers, configuration: configuration,
+                                                                      sendRange: stream.format == "mp4"),
+                              (200..<300).contains(response.response.statusCode) else { return (index, false) }
+                        let prefix = response.prefix
+                        if stream.format == "mp4" {
+                            return (index, prefix.count >= 12 && prefix.dropFirst(4).starts(with: "ftyp".utf8))
+                        }
+                        let header = String(decoding: prefix, as: UTF8.self)
+                            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}")))
+                        return (index, header.split(whereSeparator: \.isNewline).first == "#EXTM3U")
                     }
-                    let head = String(data: data.prefix(256), encoding: .utf8) ?? ""
-                    let ok = head.contains("#EXTM3U") || stream.url.pathExtension.lowercased() == "mp4" || data.count > 128
-                    return (idx, ok)
                 }
-            }
-            var firstHealthy: Int?
-            for await (idx, ok) in group {
-                if ok {
-                    firstHealthy = idx
-                    group.cancelAll()
-                    break
+                var answers: [Int: Bool] = [:]
+                for await (index, healthy) in group {
+                    answers[index] = healthy
+                    for candidate in start..<end {
+                        guard let ok = answers[candidate] else { break }
+                        if ok { group.cancelAll(); return candidate }
+                    }
                 }
+                return nil
             }
-            return firstHealthy
+            if let winner {
+                var ordered = streams
+                ordered.insert(ordered.remove(at: winner), at: 0)
+                return ordered
+            }
         }
-
-        guard let winnerIndex, winnerIndex > 0, winnerIndex < streams.count else { return streams }
-        var reordered = streams
-        let chosen = reordered.remove(at: winnerIndex)
-        reordered.insert(chosen, at: 0)
-        return reordered
+        return streams
     }
 
     func catalogItems(_ rows: [Object]) -> [Anime] {
@@ -807,7 +847,9 @@ final class MiruroProvider: MovieSourceProviding {
 
     private func title(_ row: Object) -> String? {
         let names = row["title"] as? Object
-        return [names?["english"], names?["romaji"], names?["native"]].compactMap { $0 as? String }.first { !$0.isEmpty }
+        return [names?["english"], names?["romaji"], names?["native"], row["title"]].compactMap {
+            ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.first { !$0.isEmpty && $0 != "null" }
     }
 
     private func watchRoute(_ url: URL) -> Bool {

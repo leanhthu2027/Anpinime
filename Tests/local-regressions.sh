@@ -27,7 +27,7 @@ ANPINIME_PARSER=(AnyAnime/Models.swift AnyAnime/AnimeSiteConfiguration.swift Any
 "$ANPINIME_SWIFTC" "${ANPINIME_PARSER[@]}" AnyAnime/MovieSourceProviding.swift AnyAnime/MovieProvider.swift AnyAnime/Phim4KTransportPolicy.swift Tests/ProviderTests.swift -o "$ANPINIME_CHECK_TEMP/providers"
 "$ANPINIME_CHECK_TEMP/providers"
 bash Tests/anime-home-smoke.sh
-"$ANPINIME_SWIFTC" AnyAnime/Models.swift AnyAnime/MovieSourceProviding.swift AnyAnime/Miruro/MiruroProvider.swift Tests/MiruroProviderTests.swift -o "$ANPINIME_CHECK_TEMP/miruro"
+"$ANPINIME_SWIFTC" AnyAnime/Models.swift AnyAnime/MovieSourceProviding.swift AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift AnyAnime/Aether/AetherSubtitles.swift AnyAnime/Miruro/MiruroProvider.swift Tests/MiruroProviderTests.swift -o "$ANPINIME_CHECK_TEMP/miruro"
 "$ANPINIME_CHECK_TEMP/miruro"
 "$ANPINIME_SWIFTC" AnyAnime/AIDrama/AIDramaModels.swift AnyAnime/AIDrama/PineDramaProvider.swift Tests/AIDramaProviderTests.swift -o "$ANPINIME_CHECK_TEMP/ai-provider"
 "$ANPINIME_CHECK_TEMP/ai-provider"

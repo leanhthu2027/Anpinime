@@ -9,5 +9,5 @@ trap 'rm -f "$ANPINIME_HOME_TEST_BINARY"' EXIT
   AnyAnime/MovieSourceProviding.swift AnyAnime/MovieSourceMigration.swift \
   AnyAnime/Aether/AetherDomainResolver.swift AnyAnime/Aether/AetherMetadataSettings.swift \
   AnyAnime/Aether/AetherCatalog.swift AnyAnime/Aether/AetherStreams.swift AnyAnime/Aether/AetherAdditionalSources.swift AnyAnime/Aether/AetherProvider.swift \
-  AnyAnime/Miruro/MiruroProvider.swift Tests/AnimeHomeTests.swift -o "$ANPINIME_HOME_TEST_BINARY"
+  AnyAnime/Phim4KTransportPolicy.swift AnyAnime/Phim4KMediaProbe.swift AnyAnime/Aether/AetherSubtitles.swift AnyAnime/Miruro/MiruroProvider.swift Tests/AnimeHomeTests.swift -o "$ANPINIME_HOME_TEST_BINARY"
 "$ANPINIME_HOME_TEST_BINARY"

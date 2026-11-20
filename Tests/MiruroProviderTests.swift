@@ -6,7 +6,9 @@ import FoundationNetworking
 private final class MiruroFixture: URLProtocol {
     static var payload = Data()
 
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "miruro.cx" }
+    override class func canInit(with request: URLRequest) -> Bool {
+        ["miruro.cx", "media.example"].contains(request.url?.host ?? "")
+    }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
@@ -37,7 +39,21 @@ private final class MiruroFixture: URLProtocol {
         case "/watch/show-fixture/koori-no-jouheki-2nd-season/__data.json" where query == ["ep":"1","x-sveltekit-invalidated":"01"]:
             data = Self.payload
         case "/api/sources" where query["id"] == "show-fixture" && query["n"] == "1.5":
-            data = Data(#"{"episodeNumber":1.5,"tracks":[{"track":"ssub","providers":[{"provider":"sun","servers":[{"streams":[{"format":"hls","url":"https://cdn.example/special.m3u8"}]}]}]}]}"#.utf8)
+            data = Data(#"{"episodeNumber":1.5,"providerOrder":["sun","hop"],"config":{"hidden":{"visible":false}},"tracks":[{"track":"ssub","providers":[{"provider":"sun","servers":[{"server":"Icarus","streams":[{"url":"https://cdn.example/special.m3u8"}]}]},{"provider":"hop","servers":[{"server":"Backup","streams":[{"format":"MP4","url":"https://cdn.example/other"}]}],"subtitles":[{"language":"vn","url":"https://cdn.example/vi.vtt"}]},{"provider":"hidden","subtitles":[{"label":"English","url":"https://cdn.example/hidden.vtt"}]}]}]}"#.utf8)
+        case "/info/info-only/title/__data.json":
+            data = Data(#"{"type":"data","nodes":[{"data":[{"detail":1,"episodes":2},{"title":3,"episode_counts":4},[5,6],"Info only",{"sub":7},{"episode_number":7},{"episode_number":8},1,2]}]}"#.utf8)
+        case "/api/search/browse" where query["q"] == "plain":
+            data = Data(#"{"Page":{"media":[{"id":"alt","title":"Plain title"}]}}"#.utf8)
+        case "/error-page", "/bad.mp4", "/error-text":
+            data = Data(("<html>error</html>" + String(repeating: " ", count: 256)).utf8)
+        case "/playlist", "/alternative":
+            data = Data("#EXTM3U\n#EXTINF:6,\npart.ts\n".utf8)
+        case "/movie":
+            guard request.value(forHTTPHeaderField: "Range") == "bytes=0-1023" else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                return
+            }
+            data = Data([0, 0, 0, 20]) + Data("ftypisom".utf8)
         default:
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
             return
@@ -71,6 +87,8 @@ private final class MiruroFixture: URLProtocol {
         precondition(matches[0].url.lastPathComponent == "koori-no-jouheki-2nd-season" && matches[0].score == "8.1")
         let next = try await provider.list(path: "genre=Slice of Life", page: 2)
         precondition(next == matches)
+        let alternate = try await provider.search("plain")
+        precondition(alternate.first?.title == "Plain title")
         let old = Anime(title: "Old card", url: URL(string: "https://miruro.cx/watch/show-fixture/the-ramparts-of-ice-season-2")!,
                         imageURL: nil, episodeText: "", quality: "", score: "", source: .miruro)
         let restored = try await provider.detail(old)
@@ -78,6 +96,10 @@ private final class MiruroFixture: URLProtocol {
         let detail = try await provider.detail(home[0].items[0])
         precondition(detail.episodes.count == 2 && detail.episodes.last?.url.query == "ep=1.5")
         precondition(detail.summary == "Detailed summary" && detail.posterURL?.lastPathComponent == "detail.jpg")
+        let infoOnly = Anime(title: "Card", url: URL(string: "https://miruro.cx/watch/info-only/title")!,
+                             imageURL: nil, episodeText: "", quality: "", score: "", source: .miruro)
+        let fromInfo = try await provider.detail(infoOnly)
+        precondition(fromInfo.title == "Info only" && fromInfo.episodes.compactMap(\.number) == [1])
         let schedule = try await provider.schedule()
         precondition(schedule[.tuesday]?.first?.airTime == "06:00" && schedule[.tuesday]?.first?.anime.source == .miruro)
         let followingWeek = try await provider.schedule(weekOffset: 1)
@@ -87,12 +109,32 @@ private final class MiruroFixture: URLProtocol {
         precondition(result.headers == ["Referer": "https://player.example/"])
         precondition(result.captions.first?.language == "vi" && result.nativeFallbacks.first?.url.host == "alt.example")
         let special = try await provider.resolve(detail.episodes[1], refresh: false)
-        precondition(special.url.lastPathComponent == "special.m3u8")
+        precondition(special.url.lastPathComponent == "special.m3u8" && special.nativeFormat == "hls")
+        precondition(special.label.contains("Icarus") && special.nativeFallbacks.first?.format == "mp4")
+        precondition(special.captions.map(\.language) == ["vi"] && special.captions.first?.title == "VI")
+        func candidate(_ path: String, _ format: String = "hls") -> NativeStream {
+            NativeStream(url: URL(string: "https://media.example/" + path)!, headers: [:], captions: [], format: format)
+        }
+        let broken = [candidate("error-page"), candidate("bad.mp4", "mp4"), candidate("error-text")]
+        let wave = broken + [candidate("playlist"), candidate("alternative")]
+        let probed = await provider.prioritizeHealthyStream(wave, configuration: config)
+        precondition(probed.map(\.url) == ([wave[3]] + broken + [wave[4]]).map(\.url))
+        let mp4 = await provider.prioritizeHealthyStream(broken + [candidate("movie", "mp4")], configuration: config)
+        precondition(mp4.first?.url.path == "/movie")
+        let unavailable = await provider.prioritizeHealthyStream(broken, configuration: config)
+        precondition(unavailable.map(\.url) == broken.map(\.url))
+        print("PASS: alternate catalog envelopes, Info episode fallback, named servers, sibling subtitles and second-wave HLS/MP4 selection")
         let fixture = try MiruroPage(MiruroFixture.payload)
         precondition(provider.streams(from: fixture, episode: 2).isEmpty)
 
-        let indirect = try MiruroPage(Data("""
+        let ambiguous = try MiruroPage(Data("""
         {"type":"data","nodes":[{"data":[{"value":1},["Promise",2],3,42]}]}
+        {"type":"chunk","id":3,"data":[{"name":1},"indirect"]}
+        {"type":"chunk","id":2,"data":[{"name":1},"direct"]}
+        """.utf8))
+        precondition((ambiguous.field("value") as? [String: Any])?["name"] as? String == "direct")
+        let indirect = try MiruroPage(Data("""
+        {"type":"data","nodes":[{"data":[{"value":1,"other":3},["Promise",2],3,["Promise",4],2]}]}
         {"type":"chunk","id":3,"data":[{"name":1},"indirect"]}
         {"type":"chunk","id":2,"data":[{"name":1},"direct"]}
         """.utf8))

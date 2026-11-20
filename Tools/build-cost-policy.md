@@ -19,7 +19,8 @@ Runner chỉ tải lên public key nhỏ, giữ private key tạm trong `RUNNER_
 workspace dùng `Tools/deliver-metadata-handoff.py` gửi ciphertext trên nhánh
 riêng. Thời gian chờ tối đa 180 giây nằm trong cùng job macOS 20 phút; không
 dispatch thêm workflow, không retry. Credential không nằm trong Git, input hay
-log. Secrets vẫn được ưu tiên nếu đã có. Handoff không kiểm tra playback/PiP.
+log. Mặc định workflow ưu tiên secrets. Chọn `use_workspace_metadata` nếu bản
+IPA cần cấu hình TMDB đã lưu trong workspace. Handoff không kiểm tra playback/PiP.
 
 Kiểm tra JavaScript, Home/cache, parser và network fixture phù hợp được chạy
 trong workspace Linux trước khi gửi build. Những bộ Swift phụ thuộc CryptoKit,

@@ -2,6 +2,11 @@ name: Build IPA only
 
 on:
   workflow_dispatch:
+    inputs:
+      use_workspace_metadata:
+        description: Use the encrypted workspace TMDB configuration for this build
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,11 +26,12 @@ jobs:
       - name: Prepare private metadata configuration
         id: metadata
         env:
+          USE_WORKSPACE_METADATA: ${{ inputs.use_workspace_metadata }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -n "${TMDB_API_KEY:-}" || -n "${TMDB_READ_TOKEN:-}" ]]; then
+          if [[ "$USE_WORKSPACE_METADATA" != true && ( -n "${TMDB_API_KEY:-}" || -n "${TMDB_READ_TOKEN:-}" ) ]]; then
             python3 Tools/prepare-metadata-credentials.py
             echo 'handoff=false' >> "$GITHUB_OUTPUT"
           else
